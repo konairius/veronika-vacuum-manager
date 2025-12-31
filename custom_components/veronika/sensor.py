@@ -46,6 +46,13 @@ class VeronikaPlanSensor(Entity):
             if not switch_id:
                 switch_id = f"switch.veronika_clean_{slug}"
             self._entities_to_watch.add(switch_id)
+
+            # Disable Switch
+            unique_id_disable = f"veronika_disable_{slug}"
+            disable_id = ent_reg.async_get_entity_id("switch", DOMAIN, unique_id_disable)
+            if not disable_id:
+                disable_id = f"switch.veronika_disable_{slug}"
+            self._entities_to_watch.add(disable_id)
             
             # Binary Sensor
             unique_id_sensor = f"veronika_status_{slug}"
@@ -68,7 +75,7 @@ class VeronikaPlanSensor(Entity):
 
     async def async_update(self):
         """Update the sensor state."""
-        plan = self._manager.get_cleaning_plan()
+        plan = await self._manager.get_cleaning_plan()
         
         total_cleaning = 0
         vacuums_data = {}
@@ -80,7 +87,8 @@ class VeronikaPlanSensor(Entity):
             
             vacuums_data[vac] = {
                 "rooms": rooms,
-                "count": cleaning_count
+                "count": cleaning_count,
+                "debug_command": data.get('debug_command')
             }
             
         self._state = f"{total_cleaning} Rooms Scheduled"

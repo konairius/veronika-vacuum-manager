@@ -12,7 +12,7 @@ from homeassistant.const import (
 )
 from homeassistant.helpers.event import async_track_state_change_event
 
-from .const import DOMAIN, CONF_ROOMS, CONF_NAME, CONF_VACUUM, CONF_SEGMENTS
+from .const import DOMAIN, CONF_ROOMS, CONF_NAME, CONF_VACUUM, CONF_SEGMENTS, CONF_DEBUG
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -21,6 +21,7 @@ class VeronikaManager:
         self.hass = hass
         self.config = config
         self.rooms = config[CONF_ROOMS]
+        self.debug_mode = config.get(CONF_DEBUG, False)
         self._vacuum_monitors = {}
         
         # Map vacuum -> {segment_id: [switch_entity_id]}
@@ -133,7 +134,7 @@ class VeronikaManager:
                     )
                 )
 
-    def get_cleaning_plan(self, rooms_to_clean=None):
+    async def get_cleaning_plan(self, rooms_to_clean=None):
         """
         Calculate the cleaning plan based on current state.
         Returns a dict: { vacuum_entity_id: { 'rooms': [room_details], 'segments': [ids] } }
@@ -159,6 +160,12 @@ class VeronikaManager:
             switch_id = ent_reg.async_get_entity_id("switch", DOMAIN, unique_id_switch)
             if not switch_id:
                 switch_id = f"switch.veronika_clean_{slug}"
+
+            # Disable Switch
+            unique_id_disable = f"veronika_disable_{slug}"
+            disable_id = ent_reg.async_get_entity_id("switch", DOMAIN, unique_id_disable)
+            if not disable_id:
+                disable_id = f"switch.veronika_disable_{slug}"
             
             # Sensor
             unique_id_sensor = f"veronika_status_{slug}"
@@ -168,9 +175,11 @@ class VeronikaManager:
 
             # Get States
             switch_state = self.hass.states.get(switch_id)
+            disable_state = self.hass.states.get(disable_id)
             sensor_state = self.hass.states.get(sensor_id)
             
             is_enabled = switch_state and switch_state.state == "on"
+            is_disabled_override = disable_state and disable_state.state == "on"
             is_ready = sensor_state and sensor_state.state == "on"
             reason = sensor_state.attributes.get("status_reason", "Unknown") if sensor_state else "Sensor Unavailable"
 
@@ -178,32 +187,34 @@ class VeronikaManager:
             will_clean = False
             if rooms_to_clean:
                 if name in rooms_to_clean:
-                    will_clean = True # Force clean if requested specifically? Or still check sensor?
-                    # Usually specific request overrides switch but maybe not safety sensor?
-                    # For now assuming specific request overrides switch but let's respect safety if we want.
-                    # But original logic was: if name in rooms_to_clean: should_clean = True.
-                    # Let's keep it simple: if specific request, we assume user knows best OR we check safety.
-                    # The prompt implies "jobs that ... would do ... if started now".
-                    # If started via "Clean All", it checks switches.
-                    pass 
+                    will_clean = True 
             else:
-                if is_enabled and is_ready:
+                if is_enabled and is_ready and not is_disabled_override:
                     will_clean = True
             
-            # Override reason for display if disabled
-            display_reason = reason
+            # Collect all reasons
+            reasons = []
             if not is_enabled:
-                display_reason = "Disabled"
-            if will_clean:
-                display_reason = "Scheduled"
+                reasons.append("Not Scheduled")
+            if is_disabled_override:
+                reasons.append("Disabled by Override")
+            if not is_ready:
+                reasons.append(reason)
+            
+            # Override reason for display if disabled (Legacy support, but we use reasons list now)
+            display_reason = ", ".join(reasons) if reasons else "Scheduled"
 
             room_data = {
                 "name": name,
                 "will_clean": will_clean,
                 "enabled": is_enabled,
+                "disabled_override": is_disabled_override,
                 "ready": is_ready,
                 "reason": display_reason,
-                "sensor_reason": reason # The raw reason from sensor (e.g. Occupied)
+                "reasons": reasons,
+                "sensor_reason": reason,
+                "switch_entity_id": switch_id,
+                "disable_entity_id": disable_id
             }
             
             plan[vac]['rooms'].append(room_data)
@@ -211,9 +222,11 @@ class VeronikaManager:
             if will_clean and segments:
                 plan[vac]['segments'].extend(segments)
         
-        # Deduplicate segments
+        # Deduplicate segments and add debug command
         for vac in plan:
             plan[vac]['segments'] = list(set(plan[vac]['segments']))
+            if self.debug_mode:
+                plan[vac]['debug_command'] = await self._get_vacuum_command_payload(vac, plan[vac]['segments'])
             
         return plan
 
@@ -223,7 +236,7 @@ class VeronikaManager:
         rooms_to_clean: list of room names (optional)
         """
         # 1. Identify what to clean
-        plan = self.get_cleaning_plan(rooms_to_clean)
+        plan = await self.get_cleaning_plan(rooms_to_clean)
 
         # 2. Execute Plan
         for vac, data in plan.items():
@@ -235,7 +248,7 @@ class VeronikaManager:
             
             await self._send_vacuum_command(vac, segments)
 
-    async def _send_vacuum_command(self, vacuum_entity, segments):
+    async def _get_vacuum_command_payload(self, vacuum_entity, segments):
         # Determine manufacturer
         ent_reg = er.async_get(self.hass)
         dev_reg = dr.async_get(self.hass)
@@ -247,31 +260,38 @@ class VeronikaManager:
             if device:
                 manufacturer = device.manufacturer
 
-        _LOGGER.info(f"Vacuum {vacuum_entity} manufacturer: {manufacturer}")
-
         if manufacturer == "Roborock":
-            await self.hass.services.async_call(
-                "vacuum", "send_command",
-                {
+            return {
+                "service": "vacuum.send_command",
+                "data": {
                     ATTR_ENTITY_ID: vacuum_entity,
                     "command": "app_segment_clean",
                     "params": [{"segments": segments, "repeat": 1}]
                 }
-            )
+            }
         elif "Dreame" in manufacturer:
-             await self.hass.services.async_call(
-                "dreame_vacuum", "vacuum_clean_segment",
-                {
+             return {
+                "service": "dreame_vacuum.vacuum_clean_segment",
+                "data": {
                     ATTR_ENTITY_ID: vacuum_entity,
                     "segments": segments
                 }
-            )
+            }
         else:
-            _LOGGER.warning(f"Unknown manufacturer {manufacturer} for {vacuum_entity}. Sending generic start (ignoring segments).")
-            await self.hass.services.async_call(
-                "vacuum", "start",
-                {ATTR_ENTITY_ID: vacuum_entity}
-            )
+            return {
+                "service": "vacuum.start",
+                "data": {ATTR_ENTITY_ID: vacuum_entity}
+            }
+
+    async def _send_vacuum_command(self, vacuum_entity, segments):
+        payload = await self._get_vacuum_command_payload(vacuum_entity, segments)
+        service_call = payload["service"].split(".")
+        domain = service_call[0]
+        service = service_call[1]
+        
+        await self.hass.services.async_call(
+            domain, service, payload["data"]
+        )
 
     async def reset_all_toggles(self):
         ent_reg = er.async_get(self.hass)

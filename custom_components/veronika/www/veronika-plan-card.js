@@ -86,7 +86,7 @@ class VeronikaPlanCard extends HTMLElement {
     }
 
     let html = `
-      <div style="position: absolute; top: 12px; right: 16px; z-index: 1;">
+      <div style="position: absolute; top: 12px; right: 16px; z-index: 1; display: flex; gap: 8px;">
         ${btnHtml}
       </div>
     `;
@@ -100,37 +100,46 @@ class VeronikaPlanCard extends HTMLElement {
             <ha-icon icon="mdi:robot-vacuum" style="margin-right: 8px;"></ha-icon>
             <strong>${vacuumName}</strong>
             <span style="margin-left: auto; background: var(--primary-color); color: var(--text-primary-color); padding: 2px 6px; border-radius: 4px; font-size: 0.8em;">${data.count}</span>
+            ${data.debug_command ? `<ha-icon class="debug-btn" data-vacuum="${vacuum}" icon="mdi:bug" style="margin-left: 8px; cursor: pointer; color: var(--secondary-text-color);"></ha-icon>` : ''}
         </div>
         <div style="background: var(--secondary-background-color); border-radius: 8px; padding: 8px;">
             ${data.rooms.map((room, index) => {
                 let icon = 'mdi:circle-outline';
                 let color = 'var(--secondary-text-color)';
-                let subtext = room.reason;
+                let subtext = room.reasons ? room.reasons.join(', ') : room.reason;
                 
                 if (room.will_clean) {
                     icon = 'mdi:check-circle';
                     color = 'var(--success-color, #4caf50)';
-                } else if (!room.enabled) {
+                } else if (!room.enabled || room.disabled_override) {
                     icon = 'mdi:toggle-switch-off-outline';
-                    if (room.ready) {
-                        subtext = 'Disabled (Ready)';
-                        color = 'var(--secondary-text-color)';
-                    } else {
-                        subtext = `Disabled (${room.sensor_reason})`;
-                        color = 'var(--error-color, #f44336)';
-                    }
+                    color = 'var(--secondary-text-color)';
                 } else if (!room.ready) {
                     icon = 'mdi:alert-circle';
                     color = 'var(--error-color, #f44336)';
-                    subtext = room.sensor_reason;
                 }
 
                 return `
                 <div style="display: flex; align-items: center; padding: 8px 0; border-bottom: ${index < data.rooms.length - 1 ? '1px solid var(--divider-color)' : 'none'}">
                     <ha-icon icon="${icon}" style="color: ${color}; margin-right: 12px;"></ha-icon>
-                    <div style="display: flex; flex-direction: column;">
+                    <div style="display: flex; flex-direction: column; flex: 1;">
                         <span>${room.name}</span>
                         <span style="font-size: 0.8em; color: var(--secondary-text-color);">${subtext}</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <ha-switch 
+                            class="room-toggle" 
+                            data-checked="${room.enabled}"
+                            data-entity="${room.switch_entity_id}"
+                            title="Schedule"
+                        ></ha-switch>
+                        <ha-switch 
+                            class="room-toggle" 
+                            data-checked="${room.disabled_override}"
+                            data-entity="${room.disable_entity_id}"
+                            title="Disable Override"
+                            style="--switch-checked-color: var(--error-color, #f44336);"
+                        ></ha-switch>
                     </div>
                 </div>
             `}).join('')}
@@ -139,6 +148,25 @@ class VeronikaPlanCard extends HTMLElement {
     }
 
     this.content.innerHTML = html;
+
+    // Initialize switches
+    this.content.querySelectorAll('ha-switch').forEach(sw => {
+        sw.checked = sw.getAttribute('data-checked') === 'true';
+        sw.addEventListener('change', (e) => {
+            const entityId = e.currentTarget.getAttribute('data-entity');
+            if (entityId) {
+                // We use toggle service, but maybe turn_on/off based on checked state is safer?
+                // Toggle is fine for UI interaction usually.
+                // But wait, ha-switch toggles its visual state immediately.
+                // If the service call fails, it might be out of sync until next update.
+                // That's acceptable for now.
+                const service = e.currentTarget.checked ? 'turn_on' : 'turn_off';
+                this._hass.callService('switch', service, { entity_id: entityId });
+            }
+        });
+        // Prevent click from bubbling if needed, but change event is what we want.
+        // Also remove the old click listener on .room-toggle if it conflicts.
+    });
 
     const startBtn = this.content.querySelector('#start-btn');
     if (startBtn) {
@@ -153,6 +181,19 @@ class VeronikaPlanCard extends HTMLElement {
         this._hass.callService('veronika', 'stop_cleaning');
       });
     }
+
+    // Add event listeners for debug buttons
+    this.content.querySelectorAll('.debug-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const vacuum = e.currentTarget.getAttribute('data-vacuum');
+            const vacuumData = plan[vacuum];
+            if (vacuumData && vacuumData.debug_command) {
+                window.alert(JSON.stringify(vacuumData.debug_command, null, 2));
+            } else {
+                window.alert('No debug command available');
+            }
+        });
+    });
   }
 
   setConfig(config) {
