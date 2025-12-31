@@ -53,11 +53,18 @@ def get_room_identity(hass, room, is_duplicate):
                     continue
                 
                 if isinstance(rooms_attr, dict):
-                    # Dict format: {1: "Kitchen", "2": "Living"}
+                    # Dict format: {1: "Kitchen", "2": "Living"} OR {1: {'name': 'Kitchen'}}
+                    val = None
                     if seg_id in rooms_attr:
-                        vac_room_name = rooms_attr[seg_id]
+                        val = rooms_attr[seg_id]
                     elif str(seg_id) in rooms_attr:
-                        vac_room_name = rooms_attr[str(seg_id)]
+                        val = rooms_attr[str(seg_id)]
+                    
+                    if val:
+                        if isinstance(val, dict):
+                            vac_room_name = val.get('name') or val.get('custom_name')
+                        else:
+                            vac_room_name = val
                 elif isinstance(rooms_attr, list):
                     # List format: [{'id': 1, 'name': 'Kitchen'}, ...]
                     for r in rooms_attr:
