@@ -37,13 +37,13 @@ class VeronikaManager:
         # Build maps now that we can use async methods
         ent_reg = er.async_get(self.hass)
         
-        for room in self.rooms:
+        for i, room in enumerate(self.rooms):
             vac = room[CONF_VACUUM]
             segments = room.get(CONF_SEGMENTS, [])
             area_id = room[CONF_AREA]
             
             from homeassistant.util import slugify
-            slug = slugify(area_id)
+            slug = slugify(f"{area_id}_{i}")
             unique_id = f"veronika_clean_{slug}"
             
             # Resolve entity ID
@@ -143,7 +143,7 @@ class VeronikaManager:
         ent_reg = er.async_get(self.hass)
         area_reg = ar.async_get(self.hass)
         
-        for room in self.rooms:
+        for i, room in enumerate(self.rooms):
             vac = room[CONF_VACUUM]
             area_id = room[CONF_AREA]
             segments = room.get(CONF_SEGMENTS, [])
@@ -158,7 +158,7 @@ class VeronikaManager:
 
             # Resolve Entities
             from homeassistant.util import slugify
-            slug = slugify(area_id)
+            slug = slugify(f"{area_id}_{i}")
             
             # Switch
             unique_id_switch = f"veronika_clean_{slug}"

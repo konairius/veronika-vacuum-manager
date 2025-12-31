@@ -3,7 +3,8 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import slugify
 
-from .const import DOMAIN, CONF_ROOMS, CONF_NAME
+from .const import DOMAIN, CONF_ROOMS, CONF_AREA
+from homeassistant.helpers import area_registry as ar
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -14,10 +15,17 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
 
     rooms = hass.data[DOMAIN][CONF_ROOMS]
     entities = []
+    
+    area_reg = ar.async_get(hass)
 
-    for room in rooms:
-        name = room[CONF_NAME]
-        slug = slugify(name)
+    for i, room in enumerate(rooms):
+        area_id = room[CONF_AREA]
+        
+        # Get Area Name
+        area_entry = area_reg.async_get_area(area_id)
+        name = area_entry.name if area_entry else area_id
+        
+        slug = slugify(f"{area_id}_{i}")
         entities.append(VeronikaSwitch(name, slug, "clean", "mdi:robot-vacuum"))
         entities.append(VeronikaSwitch(name, slug, "disable", "mdi:cancel"))
 

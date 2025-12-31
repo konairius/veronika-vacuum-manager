@@ -27,13 +27,13 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
         vacuum_areas[vac].add(area)
 
     entities = []
-    for room in rooms:
-        entities.append(VeronikaRoomSensor(hass, room, vacuum_areas))
+    for i, room in enumerate(rooms):
+        entities.append(VeronikaRoomSensor(hass, room, vacuum_areas, i))
 
     async_add_entities(entities)
 
 class VeronikaRoomSensor(BinarySensorEntity):
-    def __init__(self, hass, config, vacuum_areas):
+    def __init__(self, hass, config, vacuum_areas, index):
         self.hass = hass
         self._config = config
         self._vacuum = config[CONF_VACUUM]
@@ -41,7 +41,7 @@ class VeronikaRoomSensor(BinarySensorEntity):
         self._segments = config[CONF_SEGMENTS]
         self._vacuum_areas = vacuum_areas.get(self._vacuum, set())
         
-        self._slug = slugify(self._area)
+        self._slug = slugify(f"{self._area}_{index}")
         
         # Get Area Name for display
         area_reg = ar.async_get(hass)

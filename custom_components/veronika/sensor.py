@@ -35,10 +35,10 @@ class VeronikaPlanSensor(Entity):
         # Resolve entities to watch
         ent_reg = er.async_get(self.hass)
         
-        for room in self._manager.rooms:
+        for i, room in enumerate(self._manager.rooms):
             area_id = room[CONF_AREA]
             from homeassistant.util import slugify
-            slug = slugify(area_id)
+            slug = slugify(f"{area_id}_{i}")
             
             # Switch
             unique_id_switch = f"veronika_clean_{slug}"
