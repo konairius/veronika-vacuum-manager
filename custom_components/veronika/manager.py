@@ -12,7 +12,7 @@ from homeassistant.const import (
 )
 from homeassistant.helpers.event import async_track_state_change_event
 
-from .const import DOMAIN, CONF_ROOMS, CONF_NAME, CONF_VACUUM, CONF_SEGMENTS, CONF_DEBUG
+from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_SEGMENTS, CONF_DEBUG, CONF_AREA
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,10 +40,10 @@ class VeronikaManager:
         for room in self.rooms:
             vac = room[CONF_VACUUM]
             segments = room.get(CONF_SEGMENTS, [])
-            name = room[CONF_NAME]
+            area_id = room[CONF_AREA]
             
             from homeassistant.util import slugify
-            slug = slugify(name)
+            slug = slugify(area_id)
             unique_id = f"veronika_clean_{slug}"
             
             # Resolve entity ID
@@ -144,14 +144,13 @@ class VeronikaManager:
         area_reg = ar.async_get(self.hass)
         
         for room in self.rooms:
-            name = room[CONF_NAME]
             vac = room[CONF_VACUUM]
             area_id = room[CONF_AREA]
             segments = room.get(CONF_SEGMENTS, [])
             
             # Get Area Name
             area_entry = area_reg.async_get_area(area_id)
-            display_name = area_entry.name if area_entry else name
+            display_name = area_entry.name if area_entry else area_id
 
             # Initialize vacuum entry if missing
             if vac not in plan:
@@ -159,7 +158,7 @@ class VeronikaManager:
 
             # Resolve Entities
             from homeassistant.util import slugify
-            slug = slugify(name)
+            slug = slugify(area_id)
             
             # Switch
             unique_id_switch = f"veronika_clean_{slug}"
@@ -192,7 +191,7 @@ class VeronikaManager:
             # Determine if it will be cleaned
             will_clean = False
             if rooms_to_clean:
-                if name in rooms_to_clean:
+                if area_id in rooms_to_clean:
                     will_clean = True 
             else:
                 if is_enabled and is_ready and not is_disabled_override:

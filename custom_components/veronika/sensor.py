@@ -4,7 +4,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers import entity_registry as er
 
-from .const import DOMAIN, CONF_ROOMS, CONF_NAME
+from .const import DOMAIN, CONF_ROOMS, CONF_AREA
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,9 +36,9 @@ class VeronikaPlanSensor(Entity):
         ent_reg = er.async_get(self.hass)
         
         for room in self._manager.rooms:
-            name = room[CONF_NAME]
+            area_id = room[CONF_AREA]
             from homeassistant.util import slugify
-            slug = slugify(name)
+            slug = slugify(area_id)
             
             # Switch
             unique_id_switch = f"veronika_clean_{slug}"

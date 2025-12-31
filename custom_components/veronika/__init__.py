@@ -4,14 +4,12 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.discovery import async_load_platform
-from homeassistant.const import CONF_NAME
 
 from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_SEGMENTS, CONF_AREA, CONF_DEBUG
 
 _LOGGER = logging.getLogger(__name__)
 
 ROOM_SCHEMA = vol.Schema({
-    vol.Required(CONF_NAME): cv.string,
     vol.Required(CONF_VACUUM): cv.entity_id,
     vol.Required(CONF_AREA): cv.string,
     vol.Optional(CONF_SEGMENTS, default=[]): vol.All(cv.ensure_list, [int]),

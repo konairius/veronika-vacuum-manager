@@ -6,7 +6,7 @@ from homeassistant.helpers import area_registry as ar, entity_registry as er, de
 from homeassistant.util import slugify
 from homeassistant.const import STATE_ON, STATE_OFF, STATE_UNAVAILABLE, STATE_UNKNOWN
 
-from .const import DOMAIN, CONF_ROOMS, CONF_NAME, CONF_VACUUM, CONF_AREA, CONF_SEGMENTS
+from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_AREA, CONF_SEGMENTS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,13 +36,18 @@ class VeronikaRoomSensor(BinarySensorEntity):
     def __init__(self, hass, config, vacuum_areas):
         self.hass = hass
         self._config = config
-        self._name = config[CONF_NAME]
         self._vacuum = config[CONF_VACUUM]
         self._area = config[CONF_AREA]
         self._segments = config[CONF_SEGMENTS]
         self._vacuum_areas = vacuum_areas.get(self._vacuum, set())
         
-        self._slug = slugify(self._name)
+        self._slug = slugify(self._area)
+        
+        # Get Area Name for display
+        area_reg = ar.async_get(hass)
+        area_entry = area_reg.async_get_area(self._area)
+        self._name = area_entry.name if area_entry else self._area
+
         self._attr_name = f"Veronika Status {self._name}"
         self._attr_unique_id = f"veronika_status_{self._slug}"
         self._attr_icon = "mdi:robot-vacuum"
