@@ -1,0 +1,15 @@
+reset_all_toggles:
+  name: Reset All Toggles
+  description: Turns on all Veronika cleaning switches.
+
+clean_all_enabled:
+  name: Clean All Enabled Rooms
+  description: Starts cleaning for all rooms where the switch is ON and status is Ready.
+
+clean_specific_room:
+  name: Clean Specific Room
+  description: Force clean a specific room.
+  fields:
+    room_sensor:
+      description: Entity ID of the room status sensor (e.g. binary_sensor.veronika_status_kitchen)
+      example: binary_sensor.veronika_status_kitchen
