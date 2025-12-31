@@ -2,7 +2,7 @@ import logging
 import asyncio
 import time
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er, area_registry as ar
 from homeassistant.const import (
     STATE_UNAVAILABLE, 
     STATE_UNKNOWN, 
@@ -141,12 +141,18 @@ class VeronikaManager:
         """
         plan = {} # vacuum -> {'rooms': [], 'segments': []}
         ent_reg = er.async_get(self.hass)
+        area_reg = ar.async_get(self.hass)
         
         for room in self.rooms:
             name = room[CONF_NAME]
             vac = room[CONF_VACUUM]
+            area_id = room[CONF_AREA]
             segments = room.get(CONF_SEGMENTS, [])
             
+            # Get Area Name
+            area_entry = area_reg.async_get_area(area_id)
+            display_name = area_entry.name if area_entry else name
+
             # Initialize vacuum entry if missing
             if vac not in plan:
                 plan[vac] = {'rooms': [], 'segments': []}
@@ -205,7 +211,7 @@ class VeronikaManager:
             display_reason = ", ".join(reasons) if reasons else "Scheduled"
 
             room_data = {
-                "name": name,
+                "name": display_name,
                 "will_clean": will_clean,
                 "enabled": is_enabled,
                 "disabled_override": is_disabled_override,
