@@ -31,17 +31,17 @@ async def async_setup(hass: HomeAssistant, config: dict):
     conf = config[DOMAIN]
     hass.data[DOMAIN] = conf
 
-    # Load platforms
-    hass.async_create_task(async_load_platform(hass, "binary_sensor", DOMAIN, {}, config))
-    hass.async_create_task(async_load_platform(hass, "switch", DOMAIN, {}, config))
-    hass.async_create_task(async_load_platform(hass, "sensor", DOMAIN, {}, config))
-    
     # Initialize Manager
     from .manager import VeronikaManager
     manager = VeronikaManager(hass, conf)
     await manager.async_setup()
     hass.data[f"{DOMAIN}_manager"] = manager
 
+    # Load platforms
+    hass.async_create_task(async_load_platform(hass, "binary_sensor", DOMAIN, {}, config))
+    hass.async_create_task(async_load_platform(hass, "switch", DOMAIN, {}, config))
+    hass.async_create_task(async_load_platform(hass, "sensor", DOMAIN, {}, config))
+    
     # Register static path for card
     import os
     component_dir = os.path.dirname(__file__)
