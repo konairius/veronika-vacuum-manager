@@ -42,6 +42,15 @@ async def async_setup(hass: HomeAssistant, config: dict):
     await manager.async_setup()
     hass.data[f"{DOMAIN}_manager"] = manager
 
+    # Register static path for card
+    import os
+    component_dir = os.path.dirname(__file__)
+    hass.http.register_static_path(
+        "/veronika/veronika-plan-card.js",
+        os.path.join(component_dir, "www", "veronika-plan-card.js"),
+        True
+    )
+
     # Register services
     async def handle_reset_toggles(call):
         await manager.reset_all_toggles()

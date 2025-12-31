@@ -46,7 +46,12 @@ veronika:
 
 ## Lovelace Card
 
-Add the resource `/hacsfiles/veronika/veronika-plan-card.js` (if installed via HACS) or `/local/veronika-plan-card.js` (if manual).
+The integration automatically registers the card resource. Add the following to your Dashboard resources:
+
+- URL: `/veronika/veronika-plan-card.js`
+- Type: `JavaScript Module`
+
+Then add the card to your view:
 
 ```yaml
 type: custom:veronika-plan-card
