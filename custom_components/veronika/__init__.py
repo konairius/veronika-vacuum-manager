@@ -44,12 +44,16 @@ async def async_setup(hass: HomeAssistant, config: dict):
     
     # Register static path for card
     import os
+    from homeassistant.components.http import StaticPathConfig
+
     component_dir = os.path.dirname(__file__)
-    hass.http.register_static_path(
-        "/veronika/veronika-plan-card.js",
-        os.path.join(component_dir, "www", "veronika-plan-card.js"),
-        True
-    )
+    await hass.http.async_register_static_paths([
+        StaticPathConfig(
+            "/veronika/veronika-plan-card.js",
+            os.path.join(component_dir, "www", "veronika-plan-card.js"),
+            True
+        )
+    ])
 
     # Register services
     async def handle_reset_toggles(call):
