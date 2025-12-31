@@ -2,7 +2,7 @@
   "domain": "veronika",
   "name": "Veronika Vacuum Manager",
   "version": "1.0.0",
-  "documentation": "https://github.com/your_repo/veronika",
+  "documentation": "https://github.com/konairius/veronika-vacuum-manager",
   "dependencies": [],
   "codeowners": [],
   "requirements": [],
