@@ -194,6 +194,11 @@ class VeronikaRoomSensor(BinarySensorEntity):
                 d_entry = ent_reg.async_get(door)
                 if d_entry:
                     door_area = d_entry.area_id
+                    # Fallback to device area if entity area is not set
+                    if not door_area and d_entry.device_id:
+                        dev = dev_reg.async_get(d_entry.device_id)
+                        if dev:
+                            door_area = dev.area_id
                 
                 if door_area == target_area and vacuum_area != target_area:
                     self._status_reason = "Door Closed"
