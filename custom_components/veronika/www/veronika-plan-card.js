@@ -93,7 +93,7 @@ class VeronikaPlanCard extends HTMLElement {
     for (const [vacuum, data] of Object.entries(plan)) {
       // Try to get friendly name for vacuum
       const vacuumState = hass.states[vacuum];
-      const vacuumName = vacuumState ? vacuumState.attributes.friendly_name : vacuum;
+      const vacuumName = (vacuumState && vacuumState.attributes.friendly_name) ? vacuumState.attributes.friendly_name : vacuum;
 
       html += `<div style="margin-bottom: 10px;">
         <div style="display: flex; align-items: center; margin-bottom: 4px;">

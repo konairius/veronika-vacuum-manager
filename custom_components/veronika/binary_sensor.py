@@ -161,21 +161,6 @@ class VeronikaRoomSensor(BinarySensorEntity):
         self._update_state()
 
     def _update_state(self):
-        clean_state = self.hass.states.get(self._clean_switch)
-        disable_state = self.hass.states.get(self._disable_switch)
-        
-        if not clean_state or clean_state.state == STATE_OFF:
-            self._status_reason = "Not Scheduled"
-            self._is_on = False
-            self.async_write_ha_state()
-            return
-
-        if disable_state and disable_state.state == STATE_ON:
-            self._status_reason = "Disabled"
-            self._is_on = False
-            self.async_write_ha_state()
-            return
-
         # Check Occupancy
         for sens in self._occupancy:
             st = self.hass.states.get(sens)
