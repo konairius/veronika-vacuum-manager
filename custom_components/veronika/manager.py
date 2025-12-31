@@ -286,3 +286,14 @@ class VeronikaManager:
             await self.hass.services.async_call(
                 "switch", SERVICE_TURN_ON, {ATTR_ENTITY_ID: switch_id}
             )
+
+    async def stop_cleaning(self):
+        vacuums = set(r[CONF_VACUUM] for r in self.rooms)
+        for vac in vacuums:
+            state = self.hass.states.get(vac)
+            if state and state.state == "cleaning":
+                await self.hass.services.async_call(
+                    "vacuum", "return_to_base",
+                    {ATTR_ENTITY_ID: vac}
+                )
+

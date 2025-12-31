@@ -13,3 +13,8 @@ clean_specific_room:
     room_sensor:
       description: Entity ID of the room status sensor (e.g. binary_sensor.veronika_status_kitchen)
       example: binary_sensor.veronika_status_kitchen
+
+stop_cleaning:
+  name: Stop Cleaning
+  description: Sends all running vacuums back to the dock.
+

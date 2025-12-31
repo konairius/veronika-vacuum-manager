@@ -89,8 +89,12 @@ async def async_setup(hass: HomeAssistant, config: dict):
         else:
             _LOGGER.warning(f"Could not find room for sensor {sensor_id}")
 
+    async def handle_stop_cleaning(call):
+        await manager.stop_cleaning()
+
     hass.services.async_register(DOMAIN, "reset_all_toggles", handle_reset_toggles)
     hass.services.async_register(DOMAIN, "clean_all_enabled", handle_clean_all)
     hass.services.async_register(DOMAIN, "clean_specific_room", handle_clean_room)
+    hass.services.async_register(DOMAIN, "stop_cleaning", handle_stop_cleaning)
 
     return True

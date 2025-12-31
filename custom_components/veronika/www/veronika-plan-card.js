@@ -1,5 +1,6 @@
 class VeronikaPlanCard extends HTMLElement {
   set hass(hass) {
+    this._hass = hass;
     if (!this.content) {
       const card = document.createElement('ha-card');
       card.header = 'Cleaning Plan';
@@ -17,13 +18,78 @@ class VeronikaPlanCard extends HTMLElement {
       return;
     }
 
+    // Check if state has changed to avoid unnecessary re-renders
+    if (this._lastState && this._lastState === state) {
+      return;
+    }
+    this._lastState = state;
+
     const plan = state.attributes.plan;
     if (!plan || Object.keys(plan).length === 0) {
       this.content.innerHTML = 'Nothing to clean.';
       return;
     }
 
-    let html = '';
+    // Check if any vacuum is running
+    let anyRunning = false;
+    for (const vacuum of Object.keys(plan)) {
+      const vacuumState = hass.states[vacuum];
+      if (vacuumState && vacuumState.state === 'cleaning') {
+        anyRunning = true;
+        break;
+      }
+    }
+
+    let btnHtml = '';
+    if (anyRunning) {
+      btnHtml = `
+        <button id="stop-btn" style="
+            background-color: var(--error-color, #f44336); 
+            color: var(--text-primary-color); 
+            border: none; 
+            padding: 6px 12px; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-weight: 500; 
+            display: flex; 
+            align-items: center;
+            font-family: var(--paper-font-button_-_font-family);
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        ">
+          <ha-icon icon="mdi:stop" style="margin-right: 6px;"></ha-icon>
+          HOME
+        </button>
+      `;
+    } else {
+      btnHtml = `
+        <button id="start-btn" style="
+            background-color: var(--primary-color); 
+            color: var(--text-primary-color); 
+            border: none; 
+            padding: 6px 12px; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-weight: 500; 
+            display: flex; 
+            align-items: center;
+            font-family: var(--paper-font-button_-_font-family);
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        ">
+          <ha-icon icon="mdi:play" style="margin-right: 6px;"></ha-icon>
+          START
+        </button>
+      `;
+    }
+
+    let html = `
+      <div style="position: absolute; top: 12px; right: 16px; z-index: 1;">
+        ${btnHtml}
+      </div>
+    `;
     for (const [vacuum, data] of Object.entries(plan)) {
       // Try to get friendly name for vacuum
       const vacuumState = hass.states[vacuum];
@@ -73,6 +139,20 @@ class VeronikaPlanCard extends HTMLElement {
     }
 
     this.content.innerHTML = html;
+
+    const startBtn = this.content.querySelector('#start-btn');
+    if (startBtn) {
+      startBtn.addEventListener('click', () => {
+        this._hass.callService('veronika', 'clean_all_enabled');
+      });
+    }
+
+    const stopBtn = this.content.querySelector('#stop-btn');
+    if (stopBtn) {
+      stopBtn.addEventListener('click', () => {
+        this._hass.callService('veronika', 'stop_cleaning');
+      });
+    }
   }
 
   setConfig(config) {
