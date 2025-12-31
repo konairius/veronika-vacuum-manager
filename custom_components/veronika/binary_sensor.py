@@ -21,6 +21,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
     for room in rooms:
         vac = room[CONF_VACUUM]
         area = room[CONF_AREA]
+        
         if vac not in vacuum_areas:
             vacuum_areas[vac] = set()
         vacuum_areas[vac].add(area)
@@ -200,12 +201,14 @@ class VeronikaRoomSensor(BinarySensorEntity):
                         if dev:
                             door_area = dev.area_id
                 
+                # 1. Target Room Door
                 if door_area == target_area and vacuum_area != target_area:
                     self._status_reason = "Door Closed"
                     self._is_on = False
                     self.async_write_ha_state()
                     return
                 
+                # 2. Current Room Door (Trapped)
                 if door_area == vacuum_area and vacuum_area != target_area:
                     self._status_reason = "Trapped"
                     self._is_on = False
