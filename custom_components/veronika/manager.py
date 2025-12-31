@@ -13,6 +13,8 @@ from homeassistant.const import (
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_SEGMENTS, CONF_DEBUG, CONF_AREA
+from .utils import get_room_identity
+from collections import Counter
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,14 +38,18 @@ class VeronikaManager:
     async def async_setup(self):
         # Build maps now that we can use async methods
         ent_reg = er.async_get(self.hass)
+        area_reg = ar.async_get(self.hass)
         
-        for i, room in enumerate(self.rooms):
+        area_counts = Counter(r[CONF_AREA] for r in self.rooms)
+        
+        for room in self.rooms:
             vac = room[CONF_VACUUM]
             segments = room.get(CONF_SEGMENTS, [])
             area_id = room[CONF_AREA]
             
-            from homeassistant.util import slugify
-            slug = slugify(f"{area_id}_{i}")
+            is_duplicate = area_counts[area_id] > 1
+            slug, _ = get_room_identity(self.hass, room, is_duplicate)
+            
             unique_id = f"veronika_clean_{slug}"
             
             # Resolve entity ID
@@ -143,23 +149,20 @@ class VeronikaManager:
         ent_reg = er.async_get(self.hass)
         area_reg = ar.async_get(self.hass)
         
-        for i, room in enumerate(self.rooms):
+        area_counts = Counter(r[CONF_AREA] for r in self.rooms)
+        
+        for room in self.rooms:
             vac = room[CONF_VACUUM]
             area_id = room[CONF_AREA]
             segments = room.get(CONF_SEGMENTS, [])
             
-            # Get Area Name
-            area_entry = area_reg.async_get_area(area_id)
-            display_name = area_entry.name if area_entry else area_id
+            is_duplicate = area_counts[area_id] > 1
+            slug, display_name = get_room_identity(self.hass, room, is_duplicate)
 
             # Initialize vacuum entry if missing
             if vac not in plan:
                 plan[vac] = {'rooms': [], 'segments': []}
 
-            # Resolve Entities
-            from homeassistant.util import slugify
-            slug = slugify(f"{area_id}_{i}")
-            
             # Switch
             unique_id_switch = f"veronika_clean_{slug}"
             switch_id = ent_reg.async_get_entity_id("switch", DOMAIN, unique_id_switch)

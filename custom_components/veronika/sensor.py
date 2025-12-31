@@ -5,6 +5,8 @@ from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN, CONF_ROOMS, CONF_AREA
+from .utils import get_room_identity
+from collections import Counter
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,12 +37,15 @@ class VeronikaPlanSensor(Entity):
         # Resolve entities to watch
         ent_reg = er.async_get(self.hass)
         
-        for i, room in enumerate(self._manager.rooms):
+        area_counts = Counter(r[CONF_AREA] for r in self._manager.rooms)
+        
+        for room in self._manager.rooms:
             area_id = room[CONF_AREA]
-            from homeassistant.util import slugify
-            slug = slugify(f"{area_id}_{i}")
+            is_duplicate = area_counts[area_id] > 1
+            slug, _ = get_room_identity(self.hass, room, is_duplicate)
             
             # Switch
+            unique_id_switch = f"veronika_clean_{slug}"
             unique_id_switch = f"veronika_clean_{slug}"
             switch_id = ent_reg.async_get_entity_id("switch", DOMAIN, unique_id_switch)
             if not switch_id:

@@ -7,6 +7,8 @@ from homeassistant.util import slugify
 from homeassistant.const import STATE_ON, STATE_OFF, STATE_UNAVAILABLE, STATE_UNKNOWN
 
 from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_AREA, CONF_SEGMENTS
+from .utils import get_room_identity
+from collections import Counter
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,13 +29,16 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
         vacuum_areas[vac].add(area)
 
     entities = []
-    for i, room in enumerate(rooms):
-        entities.append(VeronikaRoomSensor(hass, room, vacuum_areas, i))
+    area_counts = Counter(r[CONF_AREA] for r in rooms)
+    
+    for room in rooms:
+        is_duplicate = area_counts[room[CONF_AREA]] > 1
+        entities.append(VeronikaRoomSensor(hass, room, vacuum_areas, is_duplicate))
 
     async_add_entities(entities)
 
 class VeronikaRoomSensor(BinarySensorEntity):
-    def __init__(self, hass, config, vacuum_areas, index):
+    def __init__(self, hass, config, vacuum_areas, is_duplicate):
         self.hass = hass
         self._config = config
         self._vacuum = config[CONF_VACUUM]
@@ -41,12 +46,7 @@ class VeronikaRoomSensor(BinarySensorEntity):
         self._segments = config[CONF_SEGMENTS]
         self._vacuum_areas = vacuum_areas.get(self._vacuum, set())
         
-        self._slug = slugify(f"{self._area}_{index}")
-        
-        # Get Area Name for display
-        area_reg = ar.async_get(hass)
-        area_entry = area_reg.async_get_area(self._area)
-        self._name = area_entry.name if area_entry else self._area
+        self._slug, self._name = get_room_identity(hass, config, is_duplicate)
 
         self._attr_name = f"Veronika Status {self._name}"
         self._attr_unique_id = f"veronika_status_{self._slug}"
