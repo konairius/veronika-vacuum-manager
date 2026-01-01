@@ -3,10 +3,11 @@ from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers import area_registry as ar, entity_registry as er, device_registry as dr, template
-from homeassistant.util import slugify
+from homeassistant.util import slugify, dt as dt_util
 from homeassistant.const import STATE_ON, STATE_OFF, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.helpers.event import async_call_later
 
-from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_AREA, CONF_SEGMENTS
+from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_AREA, CONF_SEGMENTS, CONF_OCCUPANCY_COOLDOWN
 from .utils import get_room_identity
 from collections import Counter
 
@@ -16,7 +17,9 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
     if discovery_info is None:
         return
 
-    rooms = hass.data[DOMAIN][CONF_ROOMS]
+    global_config = hass.data[DOMAIN]
+    rooms = global_config[CONF_ROOMS]
+    global_cooldown = global_config.get(CONF_OCCUPANCY_COOLDOWN, 0)
     
     # Pre-calculate doors per vacuum to avoid repeated lookups
     vacuum_areas = {}
@@ -33,18 +36,23 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
     
     for room in rooms:
         is_duplicate = area_counts[room[CONF_AREA]] > 1
-        entities.append(VeronikaRoomSensor(hass, room, vacuum_areas, is_duplicate))
+        entities.append(VeronikaRoomSensor(hass, room, vacuum_areas, is_duplicate, global_cooldown))
 
     async_add_entities(entities)
 
 class VeronikaRoomSensor(BinarySensorEntity):
-    def __init__(self, hass, config, vacuum_areas, is_duplicate):
+    def __init__(self, hass, config, vacuum_areas, is_duplicate, global_cooldown):
         self.hass = hass
         self._config = config
         self._vacuum = config[CONF_VACUUM]
         self._area = config[CONF_AREA]
         self._segments = config[CONF_SEGMENTS]
         self._vacuum_areas = vacuum_areas.get(self._vacuum, set())
+        
+        # Cooldown logic
+        self._cooldown = config.get(CONF_OCCUPANCY_COOLDOWN, global_cooldown)
+        self._last_occupancy_time = None
+        self._cooldown_timer = None
         
         self._slug, self._name = get_room_identity(hass, config, is_duplicate)
 
@@ -166,15 +174,52 @@ class VeronikaRoomSensor(BinarySensorEntity):
     def _on_state_change(self, event):
         self._update_state()
 
+    @callback
+    def _cooldown_expired(self, _):
+        self._cooldown_timer = None
+        self._update_state()
+
     def _update_state(self):
         # Check Occupancy
+        is_occupied = False
         for sens in self._occupancy:
             st = self.hass.states.get(sens)
             if st and st.state == STATE_ON:
-                self._status_reason = "Occupied"
+                is_occupied = True
+                break
+        
+        if is_occupied:
+            self._status_reason = "Occupied"
+            self._is_on = False
+            self._last_occupancy_time = dt_util.now()
+            
+            # Cancel any pending cooldown timer
+            if self._cooldown_timer:
+                self._cooldown_timer()
+                self._cooldown_timer = None
+                
+            self.async_write_ha_state()
+            return
+
+        # Check Cooldown
+        if self._last_occupancy_time and self._cooldown > 0:
+            elapsed = (dt_util.now() - self._last_occupancy_time).total_seconds()
+            if elapsed < self._cooldown:
+                self._status_reason = f"Occupied (Cooldown {int(self._cooldown - elapsed)}s)"
                 self._is_on = False
+                
+                # Schedule update for when cooldown expires
+                if not self._cooldown_timer:
+                    remaining = self._cooldown - elapsed
+                    self._cooldown_timer = async_call_later(self.hass, remaining + 1, self._cooldown_expired)
+                
                 self.async_write_ha_state()
                 return
+
+        # If we are here, occupancy is clear and cooldown is over
+        if self._cooldown_timer:
+             self._cooldown_timer()
+             self._cooldown_timer = None
 
         # Check Doors
         ent_reg = er.async_get(self.hass)

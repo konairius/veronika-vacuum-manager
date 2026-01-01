@@ -5,7 +5,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.discovery import async_load_platform
 
-from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_SEGMENTS, CONF_AREA, CONF_DEBUG
+from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_SEGMENTS, CONF_AREA, CONF_DEBUG, CONF_OCCUPANCY_COOLDOWN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -13,12 +13,14 @@ ROOM_SCHEMA = vol.Schema({
     vol.Required(CONF_VACUUM): cv.entity_id,
     vol.Required(CONF_AREA): cv.string,
     vol.Optional(CONF_SEGMENTS, default=[]): vol.All(cv.ensure_list, [int]),
+    vol.Optional(CONF_OCCUPANCY_COOLDOWN): cv.positive_int,
 })
 
 CONFIG_SCHEMA = vol.Schema({
     DOMAIN: vol.Schema({
         vol.Required(CONF_ROOMS): vol.All(cv.ensure_list, [ROOM_SCHEMA]),
         vol.Optional(CONF_DEBUG, default=False): cv.boolean,
+        vol.Optional(CONF_OCCUPANCY_COOLDOWN, default=0): cv.positive_int,
     }),
 }, extra=vol.ALLOW_EXTRA)
 
