@@ -303,9 +303,13 @@ class VeronikaManager:
 
     async def reset_all_toggles(self):
         ent_reg = er.async_get(self.hass)
+        area_counts = Counter(r[CONF_AREA] for r in self.rooms)
+
         for room in self.rooms:
-            from homeassistant.util import slugify
-            slug = slugify(room[CONF_NAME])
+            area_id = room[CONF_AREA]
+            is_duplicate = area_counts[area_id] > 1
+            slug, _ = get_room_identity(self.hass, room, is_duplicate)
+
             unique_id = f"veronika_clean_{slug}"
             switch_id = ent_reg.async_get_entity_id("switch", DOMAIN, unique_id)
             if not switch_id:
