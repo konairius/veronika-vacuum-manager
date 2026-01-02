@@ -222,7 +222,8 @@ class VeronikaManager:
                 "reasons": reasons,
                 "sensor_reason": reason,
                 "switch_entity_id": switch_id,
-                "disable_entity_id": disable_id
+                "disable_entity_id": disable_id,
+                "sensor_entity_id": sensor_id
             }
             
             plan[vac]['rooms'].append(room_data)

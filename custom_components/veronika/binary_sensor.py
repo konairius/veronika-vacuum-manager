@@ -205,7 +205,7 @@ class VeronikaRoomSensor(BinarySensorEntity):
         if self._last_occupancy_time and self._cooldown > 0:
             elapsed = (dt_util.now() - self._last_occupancy_time).total_seconds()
             if elapsed < self._cooldown:
-                self._status_reason = f"Occupied (Cooldown {int(self._cooldown - elapsed)}s)"
+                self._status_reason = "Occupied (Cooldown)"
                 self._is_on = False
                 
                 # Schedule update for when cooldown expires

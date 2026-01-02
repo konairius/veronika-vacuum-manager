@@ -108,19 +108,22 @@ class VeronikaPlanCard extends HTMLElement {
                 let color = 'var(--secondary-text-color)';
                 let subtext = room.reasons ? room.reasons.join(', ') : room.reason;
                 
-                if (room.will_clean) {
-                    icon = 'mdi:check-circle';
-                    color = 'var(--success-color, #4caf50)';
-                } else if (!room.enabled || room.disabled_override) {
+                if (room.disabled_override) {
+                    icon = 'mdi:alert-circle';
+                    color = 'var(--error-color, #f44336)';
+                } else if (!room.enabled) {
                     icon = 'mdi:toggle-switch-off-outline';
                     color = 'var(--secondary-text-color)';
                 } else if (!room.ready) {
-                    icon = 'mdi:alert-circle';
-                    color = 'var(--error-color, #f44336)';
+                    icon = 'mdi:alert';
+                    color = 'var(--warning-color, #ff9800)';
+                } else if (room.will_clean) {
+                    icon = 'mdi:check-circle';
+                    color = 'var(--success-color, #4caf50)';
                 }
 
                 return `
-                <div style="display: flex; align-items: center; padding: 8px 0; border-bottom: ${index < data.rooms.length - 1 ? '1px solid var(--divider-color)' : 'none'}">
+                <div class="room-row" data-entity="${room.sensor_entity_id}" style="display: flex; align-items: center; padding: 8px 0; border-bottom: ${index < data.rooms.length - 1 ? '1px solid var(--divider-color)' : 'none'}; cursor: pointer;">
                     <ha-icon icon="${icon}" style="color: ${color}; margin-right: 12px;"></ha-icon>
                     <div style="display: flex; flex-direction: column; flex: 1;">
                         <span>${room.name}</span>
@@ -152,20 +155,29 @@ class VeronikaPlanCard extends HTMLElement {
     // Initialize switches
     this.content.querySelectorAll('ha-switch').forEach(sw => {
         sw.checked = sw.getAttribute('data-checked') === 'true';
+        sw.addEventListener('click', (e) => e.stopPropagation()); // Prevent row click
         sw.addEventListener('change', (e) => {
             const entityId = e.currentTarget.getAttribute('data-entity');
             if (entityId) {
-                // We use toggle service, but maybe turn_on/off based on checked state is safer?
-                // Toggle is fine for UI interaction usually.
-                // But wait, ha-switch toggles its visual state immediately.
-                // If the service call fails, it might be out of sync until next update.
-                // That's acceptable for now.
                 const service = e.currentTarget.checked ? 'turn_on' : 'turn_off';
                 this._hass.callService('switch', service, { entity_id: entityId });
             }
         });
-        // Prevent click from bubbling if needed, but change event is what we want.
-        // Also remove the old click listener on .room-toggle if it conflicts.
+    });
+
+    // Row click handler
+    this.content.querySelectorAll('.room-row').forEach(row => {
+        row.addEventListener('click', (e) => {
+            const entityId = e.currentTarget.getAttribute('data-entity');
+            if (entityId) {
+                const event = new Event('hass-more-info', {
+                    bubbles: true,
+                    composed: true,
+                });
+                event.detail = { entityId };
+                this.dispatchEvent(event);
+            }
+        });
     });
 
     const startBtn = this.content.querySelector('#start-btn');
