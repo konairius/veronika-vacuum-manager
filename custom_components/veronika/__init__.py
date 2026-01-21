@@ -1,7 +1,8 @@
 import logging
 import voluptuous as vol
+from typing import List, Dict, Any, Optional
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.discovery import async_load_platform
 from homeassistant.helpers import area_registry as ar, entity_registry as er
@@ -30,11 +31,11 @@ CONFIG_SCHEMA = vol.Schema({
     }),
 }, extra=vol.ALLOW_EXTRA)
 
-async def _validate_configuration(hass: HomeAssistant, config: dict) -> list[str]:
+async def _validate_configuration(hass: HomeAssistant, config: Dict[str, Any]) -> List[str]:
     """Validate configuration and return list of errors."""
-    errors = []
-    area_reg = ar.async_get(hass)
-    rooms = config[CONF_ROOMS]
+    errors: List[str] = []
+    area_reg: ar.AreaRegistry = ar.async_get(hass)
+    rooms: List[Dict[str, Any]] = config[CONF_ROOMS]
     
     for idx, room in enumerate(rooms):
         room_desc = f"Room {idx + 1} ({room.get(CONF_AREA, 'unknown')})"
@@ -69,15 +70,15 @@ async def _validate_configuration(hass: HomeAssistant, config: dict) -> list[str
     
     return errors
 
-async def async_setup(hass: HomeAssistant, config: dict):
+async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
     """Set up the Veronika component."""
     if DOMAIN not in config:
         return True
 
-    conf = config[DOMAIN]
+    conf: Dict[str, Any] = config[DOMAIN]
     
     # Validate configuration
-    validation_errors = await _validate_configuration(hass, conf)
+    validation_errors: List[str] = await _validate_configuration(hass, conf)
     if validation_errors:
         for error in validation_errors:
             _LOGGER.error(f"Configuration validation error: {error}")
@@ -111,20 +112,20 @@ async def async_setup(hass: HomeAssistant, config: dict):
     ])
 
     # Register services
-    async def handle_reset_toggles(call):
+    async def handle_reset_toggles(call: ServiceCall) -> None:
         await manager.reset_all_toggles()
 
-    async def handle_clean_all(call):
+    async def handle_clean_all(call: ServiceCall) -> None:
         await manager.start_cleaning()
 
-    async def handle_clean_room(call):
-        area = call.data.get("area")
+    async def handle_clean_room(call: ServiceCall) -> None:
+        area: Optional[str] = call.data.get("area")
         if area:
             await manager.start_cleaning([area])
         else:
             _LOGGER.warning("No area specified for clean_specific_room service")
 
-    async def handle_stop_cleaning(call):
+    async def handle_stop_cleaning(call: ServiceCall) -> None:
         await manager.stop_cleaning()
 
     hass.services.async_register(DOMAIN, "reset_all_toggles", handle_reset_toggles)

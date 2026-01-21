@@ -1,16 +1,18 @@
 import logging
+from typing import Any, Dict, List, Optional, Set, Tuple
+from homeassistant.core import HomeAssistant
 from homeassistant.util import slugify
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
 from .const import CONF_AREA, CONF_VACUUM, CONF_SEGMENTS
 
 _LOGGER = logging.getLogger(__name__)
 
-def get_area_entities(hass, area_id):
+def get_area_entities(hass: HomeAssistant, area_id: str) -> List[str]:
     """Get all entity IDs in an area (direct and via devices)."""
-    ent_reg = er.async_get(hass)
-    dev_reg = dr.async_get(hass)
+    ent_reg: er.EntityRegistry = er.async_get(hass)
+    dev_reg: dr.DeviceRegistry = dr.async_get(hass)
     
-    entities = set()
+    entities: Set[str] = set()
     # Entities directly in area
     for entry in er.async_entries_for_area(ent_reg, area_id):
         entities.add(entry.entity_id)
@@ -22,11 +24,11 @@ def get_area_entities(hass, area_id):
                 entities.add(entry.entity_id)
     return list(entities)
 
-def get_entity_device_class(hass, entity_id):
+def get_entity_device_class(hass: HomeAssistant, entity_id: str) -> Optional[str]:
     """Get device class for an entity, preferring state attributes over registry."""
-    ent_reg = er.async_get(hass)
+    ent_reg: er.EntityRegistry = er.async_get(hass)
     state = hass.states.get(entity_id)
-    entry = ent_reg.async_get(entity_id)
+    entry: Optional[er.RegistryEntry] = ent_reg.async_get(entity_id)
     
     # Prefer state attributes (allows runtime overrides)
     if state:
@@ -40,7 +42,7 @@ def get_entity_device_class(hass, entity_id):
     
     return None
 
-def discover_occupancy_sensors(hass, area_id, platform_filter=None):
+def discover_occupancy_sensors(hass: HomeAssistant, area_id: str, platform_filter: Optional[str] = None) -> List[str]:
     """Discover occupancy sensors in an area.
     
     Args:
@@ -51,9 +53,9 @@ def discover_occupancy_sensors(hass, area_id, platform_filter=None):
     Returns:
         List of entity IDs with occupancy device class
     """
-    ent_reg = er.async_get(hass)
-    area_entities = get_area_entities(hass, area_id)
-    occupancy_sensors = []
+    ent_reg: er.EntityRegistry = er.async_get(hass)
+    area_entities: List[str] = get_area_entities(hass, area_id)
+    occupancy_sensors: List[str] = []
     
     for entity_id in area_entities:
         entry = ent_reg.async_get(entity_id)
@@ -69,7 +71,7 @@ def discover_occupancy_sensors(hass, area_id, platform_filter=None):
     
     return occupancy_sensors
 
-def discover_door_sensors(hass, area_ids):
+def discover_door_sensors(hass: HomeAssistant, area_ids: List[str]) -> List[str]:
     """Discover door sensors across multiple areas.
     
     Args:
@@ -79,7 +81,7 @@ def discover_door_sensors(hass, area_ids):
     Returns:
         List of entity IDs with door device class
     """
-    door_sensors = []
+    door_sensors: List[str] = []
     
     for area_id in area_ids:
         area_entities = get_area_entities(hass, area_id)
@@ -90,36 +92,44 @@ def discover_door_sensors(hass, area_ids):
     
     return door_sensors
 
-def get_room_identity(hass, room, is_duplicate):
+def get_room_identity(hass: HomeAssistant, room: Dict[str, Any], is_duplicate: bool) -> Tuple[str, str]:
     """
     Determine the unique slug and display name for a room.
     If is_duplicate is True, tries to fetch the room name from the vacuum entity.
+    
+    Args:
+        hass: HomeAssistant instance
+        room: Room configuration dictionary
+        is_duplicate: Whether this is a duplicate area
+    
+    Returns:
+        Tuple of (slug, display_name)
     """
-    area_id = room[CONF_AREA]
-    area_reg = ar.async_get(hass)
-    area_entry = area_reg.async_get_area(area_id)
-    ha_area_name = area_entry.name if area_entry else area_id
+    area_id: str = room[CONF_AREA]
+    area_reg: ar.AreaRegistry = ar.async_get(hass)
+    area_entry: Optional[ar.AreaEntry] = area_reg.async_get_area(area_id)
+    ha_area_name: str = area_entry.name if area_entry else area_id
     
     if not is_duplicate:
         return slugify(area_id), ha_area_name
         
     # Handle Duplicate
-    vac_id = room[CONF_VACUUM]
-    segments = room.get(CONF_SEGMENTS, [])
+    vac_id: str = room[CONF_VACUUM]
+    segments: List[int] = room.get(CONF_SEGMENTS, [])
     
-    vac_room_name = None
+    vac_room_name: Optional[str] = None
     
     if segments:
-        seg_id = segments[0]
+        seg_id: int = segments[0]
         
         # Find the entity that holds the 'rooms' attribute
         # 1. Check vacuum entity itself
         # 2. Check siblings on the same device
         
-        candidates = [vac_id]
+        candidates: List[str] = [vac_id]
         
-        ent_reg = er.async_get(hass)
-        vac_entry = ent_reg.async_get(vac_id)
+        ent_reg: er.EntityRegistry = er.async_get(hass)
+        vac_entry: Optional[er.RegistryEntry] = ent_reg.async_get(vac_id)
         
         if vac_entry and vac_entry.device_id:
             # Add all sibling entities

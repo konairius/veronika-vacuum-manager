@@ -1,7 +1,8 @@
 import logging
 import asyncio
 import time
-from homeassistant.core import HomeAssistant, callback
+from typing import Any, Dict, List, Optional, Set, Callable
+from homeassistant.core import HomeAssistant, callback, Event
 from homeassistant.helpers import device_registry as dr, entity_registry as er, area_registry as ar
 from homeassistant.const import (
     STATE_UNAVAILABLE, 
@@ -19,39 +20,39 @@ from collections import Counter
 _LOGGER = logging.getLogger(__name__)
 
 class VeronikaManager:
-    def __init__(self, hass: HomeAssistant, config: dict):
-        self.hass = hass
-        self.config = config
-        self.rooms = config[CONF_ROOMS]
-        self.debug_mode = config.get(CONF_DEBUG, False)
-        self.min_segment_duration = config.get(CONF_MIN_SEGMENT_DURATION, 180)
-        self._vacuum_monitors = {}
-        self._unsubscribers = []  # Track listeners for cleanup
+    def __init__(self, hass: HomeAssistant, config: Dict[str, Any]) -> None:
+        self.hass: HomeAssistant = hass
+        self.config: Dict[str, Any] = config
+        self.rooms: List[Dict[str, Any]] = config[CONF_ROOMS]
+        self.debug_mode: bool = config.get(CONF_DEBUG, False)
+        self.min_segment_duration: int = config.get(CONF_MIN_SEGMENT_DURATION, 180)
+        self._vacuum_monitors: Dict[str, Dict[str, Any]] = {}
+        self._unsubscribers: List[Callable[[], None]] = []  # Track listeners for cleanup
         
         # Map vacuum -> segment_attribute_name for different integrations
-        self._vacuum_segment_attributes = {}
-        global_segment_attr = config.get(CONF_SEGMENT_ATTRIBUTE, "current_segment")
+        self._vacuum_segment_attributes: Dict[str, str] = {}
+        global_segment_attr: str = config.get(CONF_SEGMENT_ATTRIBUTE, "current_segment")
         for room in self.rooms:
-            vac = room[CONF_VACUUM]
+            vac: str = room[CONF_VACUUM]
             if vac not in self._vacuum_segment_attributes:
                 # Per-room override or global default
                 self._vacuum_segment_attributes[vac] = room.get(CONF_SEGMENT_ATTRIBUTE, global_segment_attr)
         
         # Map vacuum -> {segment_id: [switch_entity_id]}
-        self._vacuum_segment_map = {}
+        self._vacuum_segment_map: Dict[str, Dict[int, List[str]]] = {}
         
         # Cache for entity IDs to avoid repeated registry lookups
         # Structure: {cache_key: {'switch': id, 'disable': id, 'sensor': id, 'slug': slug, 'name': name, ...}}
-        self._entity_cache = {}
+        self._entity_cache: Dict[str, Dict[str, Any]] = {}
         
         self._build_maps()
 
-    def _build_maps(self):
+    def _build_maps(self) -> None:
         # We can't use entity registry here easily because it's async and this is init.
         # We will resolve IDs in async_setup
         pass
 
-    def register_entity(self, entity_type, slug, entity_id):
+    def register_entity(self, entity_type: str, slug: str, entity_id: str) -> None:
         """Register an entity with the manager."""
         # Find the cache entry with matching slug
         target_key = None
@@ -73,12 +74,12 @@ class VeronikaManager:
         elif entity_type == 'binary_sensor':
             self._entity_cache[target_key]['sensor'] = entity_id
 
-    def _update_vacuum_segment_map(self, cache_key):
+    def _update_vacuum_segment_map(self, cache_key: str) -> None:
         """Update the vacuum segment map for a specific cache entry."""
-        data = self._entity_cache[cache_key]
-        vac = data['vacuum']
-        segments = data['segments']
-        switch_id = data['switch']
+        data: Dict[str, Any] = self._entity_cache[cache_key]
+        vac: str = data['vacuum']
+        segments: List[int] = data['segments']
+        switch_id: Optional[str] = data['switch']
         
         if not switch_id:
             return
@@ -94,12 +95,12 @@ class VeronikaManager:
             if switch_id not in self._vacuum_segment_map[vac][seg]:
                 self._vacuum_segment_map[vac][seg].append(switch_id)
 
-    async def async_setup(self):
+    async def async_setup(self) -> None:
         # Build maps now that we can use async methods
-        ent_reg = er.async_get(self.hass)
-        area_reg = ar.async_get(self.hass)
+        ent_reg: er.EntityRegistry = er.async_get(self.hass)
+        area_reg: ar.AreaRegistry = ar.async_get(self.hass)
         
-        area_counts = Counter(r[CONF_AREA] for r in self.rooms)
+        area_counts: Counter = Counter(r[CONF_AREA] for r in self.rooms)
         
         for room in self.rooms:
             vac = room[CONF_VACUUM]
@@ -151,8 +152,8 @@ class VeronikaManager:
             self._unsubscribers.append(unsub)
 
     @callback
-    def _on_vacuum_state_change(self, event):
-        entity_id = event.data.get("entity_id")
+    def _on_vacuum_state_change(self, event: Event) -> None:
+        entity_id: Optional[str] = event.data.get("entity_id")
         new_state = event.data.get("new_state")
         old_state = event.data.get("old_state")
         
@@ -198,7 +199,7 @@ class VeronikaManager:
             monitor["current_segment"] = new_segment
             monitor["start_time"] = time.time()
 
-    async def _handle_segment_completion(self, vacuum_id, segment_id, duration):
+    async def _handle_segment_completion(self, vacuum_id: str, segment_id: int, duration: float) -> None:
         _LOGGER.info(f"Vacuum {vacuum_id} finished segment {segment_id} in {duration}s")
         
         if duration < self.min_segment_duration:
@@ -217,11 +218,11 @@ class VeronikaManager:
                 except Exception as err:
                     _LOGGER.error(f"Failed to reset switch {switch}: {err}")
 
-    async def get_cleaning_plan(self, rooms_to_clean=None):
+    async def get_cleaning_plan(self, rooms_to_clean: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
         """Calculate the cleaning plan based on current state.
         Returns a dict: { vacuum_entity_id: { 'rooms': [room_details], 'segments': [ids] } }
         """
-        plan = {}  # vacuum -> {'rooms': [], 'segments': []}
+        plan: Dict[str, Dict[str, Any]] = {}  # vacuum -> {'rooms': [], 'segments': []}
         
         # Use cached entity IDs instead of querying registry
         for cache_key, cache_data in self._entity_cache.items():
@@ -297,13 +298,13 @@ class VeronikaManager:
             
         return plan
 
-    async def start_cleaning(self, rooms_to_clean=None):
+    async def start_cleaning(self, rooms_to_clean: Optional[List[str]] = None) -> None:
         """
         Start cleaning for specific rooms or all enabled rooms.
         rooms_to_clean: list of room names (optional)
         """
         # 1. Identify what to clean
-        plan = await self.get_cleaning_plan(rooms_to_clean)
+        plan: Dict[str, Dict[str, Any]] = await self.get_cleaning_plan(rooms_to_clean)
 
         # 2. Execute Plan
         for vac, data in plan.items():
@@ -315,13 +316,13 @@ class VeronikaManager:
             
             await self._send_vacuum_command(vac, segments)
 
-    async def _get_vacuum_command_payload(self, vacuum_entity, segments):
+    async def _get_vacuum_command_payload(self, vacuum_entity: str, segments: List[int]) -> Dict[str, Any]:
         # Determine manufacturer
-        ent_reg = er.async_get(self.hass)
-        dev_reg = dr.async_get(self.hass)
+        ent_reg: er.EntityRegistry = er.async_get(self.hass)
+        dev_reg: dr.DeviceRegistry = dr.async_get(self.hass)
         
-        manufacturer = ""
-        entry = ent_reg.async_get(vacuum_entity)
+        manufacturer: str = ""
+        entry: Optional[er.RegistryEntry] = ent_reg.async_get(vacuum_entity)
         if entry and entry.device_id:
             device = dev_reg.async_get(entry.device_id)
             if device:
@@ -350,11 +351,11 @@ class VeronikaManager:
                 "data": {ATTR_ENTITY_ID: vacuum_entity}
             }
 
-    async def _send_vacuum_command(self, vacuum_entity, segments):
-        payload = await self._get_vacuum_command_payload(vacuum_entity, segments)
-        service_call = payload["service"].split(".")
-        domain = service_call[0]
-        service = service_call[1]
+    async def _send_vacuum_command(self, vacuum_entity: str, segments: List[int]) -> None:
+        payload: Dict[str, Any] = await self._get_vacuum_command_payload(vacuum_entity, segments)
+        service_call: List[str] = payload["service"].split(".")
+        domain: str = service_call[0]
+        service: str = service_call[1]
         
         try:
             await self.hass.services.async_call(
@@ -364,16 +365,16 @@ class VeronikaManager:
         except Exception as err:
             _LOGGER.error(f"Failed to send command to {vacuum_entity}: {err}")
 
-    async def reset_all_toggles(self):
+    async def reset_all_toggles(self) -> None:
         """Reset all cleaning toggles to ON."""
         for cache_data in self._entity_cache.values():
-            switch_id = cache_data['switch']
+            switch_id: Optional[str] = cache_data['switch']
             await self.hass.services.async_call(
                 "switch", SERVICE_TURN_ON, {ATTR_ENTITY_ID: switch_id}
             )
 
-    async def stop_cleaning(self):
-        vacuums = set(r[CONF_VACUUM] for r in self.rooms)
+    async def stop_cleaning(self) -> None:
+        vacuums: Set[str] = set(r[CONF_VACUUM] for r in self.rooms)
         for vac in vacuums:
             state = self.hass.states.get(vac)
             if state and state.state == "cleaning":
@@ -382,7 +383,7 @@ class VeronikaManager:
                     {ATTR_ENTITY_ID: vac}
                 )
 
-    async def async_unload(self):
+    async def async_unload(self) -> None:
         """Cleanup when unloading the integration."""
         # Unsubscribe from all state change listeners
         for unsub in self._unsubscribers:

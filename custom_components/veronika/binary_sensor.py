@@ -1,11 +1,13 @@
 import logging
+from typing import Any, Dict, List, Optional, Set, Callable
 from homeassistant.components.binary_sensor import BinarySensorEntity
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, callback, Event
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers import area_registry as ar, entity_registry as er, device_registry as dr, template
 from homeassistant.util import slugify, dt as dt_util
 from homeassistant.const import STATE_ON, STATE_OFF, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_AREA, CONF_SEGMENTS, CONF_OCCUPANCY_COOLDOWN, CONF_SENSOR_PLATFORM
 from .utils import get_room_identity, discover_occupancy_sensors, discover_door_sensors
@@ -13,27 +15,32 @@ from collections import Counter
 
 _LOGGER = logging.getLogger(__name__)
 
-async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
+async def async_setup_platform(
+    hass: HomeAssistant,
+    config: Dict[str, Any],
+    async_add_entities: AddEntitiesCallback,
+    discovery_info: Optional[Dict[str, Any]] = None
+) -> None:
     if discovery_info is None:
         return
 
-    global_config = hass.data[DOMAIN]
-    rooms = global_config[CONF_ROOMS]
-    global_cooldown = global_config.get(CONF_OCCUPANCY_COOLDOWN, 0)
-    global_sensor_platform = global_config.get(CONF_SENSOR_PLATFORM)
+    global_config: Dict[str, Any] = hass.data[DOMAIN]
+    rooms: List[Dict[str, Any]] = global_config[CONF_ROOMS]
+    global_cooldown: int = global_config.get(CONF_OCCUPANCY_COOLDOWN, 0)
+    global_sensor_platform: Optional[str] = global_config.get(CONF_SENSOR_PLATFORM)
     
     # Pre-calculate doors per vacuum to avoid repeated lookups
-    vacuum_areas = {}
+    vacuum_areas: Dict[str, Set[str]] = {}
     for room in rooms:
-        vac = room[CONF_VACUUM]
-        area = room[CONF_AREA]
+        vac: str = room[CONF_VACUUM]
+        area: str = room[CONF_AREA]
         
         if vac not in vacuum_areas:
             vacuum_areas[vac] = set()
         vacuum_areas[vac].add(area)
 
-    entities = []
-    area_counts = Counter(r[CONF_AREA] for r in rooms)
+    entities: List[VeronikaRoomSensor] = []
+    area_counts: Counter = Counter(r[CONF_AREA] for r in rooms)
     
     for room in rooms:
         is_duplicate = area_counts[room[CONF_AREA]] > 1
@@ -42,20 +49,28 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
     async_add_entities(entities)
 
 class VeronikaRoomSensor(BinarySensorEntity):
-    def __init__(self, hass, config, vacuum_areas, is_duplicate, global_cooldown, global_sensor_platform):
-        self.hass = hass
-        self._config = config
-        self._vacuum = config[CONF_VACUUM]
-        self._area = config[CONF_AREA]
-        self._segments = config[CONF_SEGMENTS]
-        self._vacuum_areas = vacuum_areas.get(self._vacuum, set())
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        config: Dict[str, Any],
+        vacuum_areas: Dict[str, Set[str]],
+        is_duplicate: bool,
+        global_cooldown: int,
+        global_sensor_platform: Optional[str]
+    ) -> None:
+        self.hass: HomeAssistant = hass
+        self._config: Dict[str, Any] = config
+        self._vacuum: str = config[CONF_VACUUM]
+        self._area: str = config[CONF_AREA]
+        self._segments: List[int] = config[CONF_SEGMENTS]
+        self._vacuum_areas: Set[str] = vacuum_areas.get(self._vacuum, set())
         
         # Cooldown logic
-        self._cooldown = config.get(CONF_OCCUPANCY_COOLDOWN, global_cooldown)
-        self._sensor_platform = config.get(CONF_SENSOR_PLATFORM, global_sensor_platform)
+        self._cooldown: int = config.get(CONF_OCCUPANCY_COOLDOWN, global_cooldown)
+        self._sensor_platform: Optional[str] = config.get(CONF_SENSOR_PLATFORM, global_sensor_platform)
 
-        self._last_occupancy_time = None
-        self._cooldown_timer = None
+        self._last_occupancy_time: Optional[dt_util.dt.datetime] = None
+        self._cooldown_timer: Optional[Callable[[], None]] = None
         
         self._slug, self._name = get_room_identity(hass, config, is_duplicate)
 
@@ -63,20 +78,20 @@ class VeronikaRoomSensor(BinarySensorEntity):
         self._attr_unique_id = f"veronika_status_{self._slug}"
         self._attr_icon = "mdi:robot-vacuum"
         
-        self._clean_switch = f"switch.veronika_clean_{self._slug}"
-        self._disable_switch = f"switch.veronika_disable_{self._slug}"
+        self._clean_switch: str = f"switch.veronika_clean_{self._slug}"
+        self._disable_switch: str = f"switch.veronika_disable_{self._slug}"
         
-        self._doors = []
-        self._occupancy = []
-        self._status_reason = "Initializing"
-        self._is_on = False
+        self._doors: List[str] = []
+        self._occupancy: List[str] = []
+        self._status_reason: str = "Initializing"
+        self._is_on: bool = False
 
     @property
-    def is_on(self):
+    def is_on(self) -> bool:
         return self._is_on
 
     @property
-    def extra_state_attributes(self):
+    def extra_state_attributes(self) -> Dict[str, Any]:
         return {
             "veronika_segments": self._segments,
             "veronika_vacuum": self._vacuum,
@@ -88,9 +103,9 @@ class VeronikaRoomSensor(BinarySensorEntity):
             "veronika_clean_entity": self._clean_switch
         }
 
-    async def async_added_to_hass(self):
+    async def async_added_to_hass(self) -> None:
         # Resolve entity IDs from unique IDs
-        ent_reg = er.async_get(self.hass)
+        ent_reg: er.EntityRegistry = er.async_get(self.hass)
         
         # Register with Manager
         manager = self.hass.data.get(f"{DOMAIN}_manager")
@@ -121,14 +136,14 @@ class VeronikaRoomSensor(BinarySensorEntity):
         )
         self._update_state()
 
-    async def async_will_remove_from_hass(self):
+    async def async_will_remove_from_hass(self) -> None:
         """Cleanup when entity is removed."""
         # Cancel any pending cooldown timer
         if self._cooldown_timer:
             self._cooldown_timer()
             self._cooldown_timer = None
 
-    async def _discover_sensors(self):
+    async def _discover_sensors(self) -> None:
         """Discover occupancy and door sensors for this room."""
         # Discover occupancy sensors in the room's area
         self._occupancy = discover_occupancy_sensors(self.hass, self._area, platform_filter=self._sensor_platform)
@@ -137,15 +152,15 @@ class VeronikaRoomSensor(BinarySensorEntity):
         self._doors = discover_door_sensors(self.hass, list(self._vacuum_areas))
 
     @callback
-    def _on_state_change(self, event):
+    def _on_state_change(self, event: Event) -> None:
         self._update_state()
 
     @callback
-    def _cooldown_expired(self, _):
+    def _cooldown_expired(self, _: Any) -> None:
         self._cooldown_timer = None
         self._update_state()
 
-    def _update_state(self):
+    def _update_state(self) -> None:
         # Check Occupancy
         is_occupied = False
         for sens in self._occupancy:

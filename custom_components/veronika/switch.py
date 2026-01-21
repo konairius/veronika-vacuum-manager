@@ -1,7 +1,11 @@
 import logging
+from typing import Any, Dict, List, Optional
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import slugify
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.config_entries import ConfigEntry
 
 from .const import DOMAIN, CONF_ROOMS, CONF_AREA, CONF_VACUUM, CONF_SEGMENTS
 from .utils import get_room_identity
@@ -10,13 +14,18 @@ from homeassistant.helpers import area_registry as ar
 
 _LOGGER = logging.getLogger(__name__)
 
-async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
+async def async_setup_platform(
+    hass: HomeAssistant,
+    config: Dict[str, Any],
+    async_add_entities: AddEntitiesCallback,
+    discovery_info: Optional[Dict[str, Any]] = None
+) -> None:
     """Set up the Veronika switches."""
     if discovery_info is None:
         return
 
-    rooms = hass.data[DOMAIN][CONF_ROOMS]
-    entities = []
+    rooms: List[Dict[str, Any]] = hass.data[DOMAIN][CONF_ROOMS]
+    entities: List[VeronikaSwitch] = []
     
     area_counts = Counter(r[CONF_AREA] for r in rooms)
 
@@ -32,28 +41,28 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
     async_add_entities(entities)
 
 class VeronikaSwitch(SwitchEntity, RestoreEntity):
-    def __init__(self, room_name, room_slug, switch_type, icon):
-        self._room_name = room_name
-        self._room_slug = room_slug
-        self._type = switch_type
-        self._attr_name = f"Veronika {switch_type.capitalize()} {room_name}"
-        self._attr_unique_id = f"veronika_{switch_type}_{room_slug}"
-        self._attr_icon = icon
-        self._is_on = False
+    def __init__(self, room_name: str, room_slug: str, switch_type: str, icon: str) -> None:
+        self._room_name: str = room_name
+        self._room_slug: str = room_slug
+        self._type: str = switch_type
+        self._attr_name: str = f"Veronika {switch_type.capitalize()} {room_name}"
+        self._attr_unique_id: str = f"veronika_{switch_type}_{room_slug}"
+        self._attr_icon: str = icon
+        self._is_on: bool = False
 
     @property
-    def is_on(self):
+    def is_on(self) -> bool:
         return self._is_on
 
-    async def async_turn_on(self, **kwargs):
+    async def async_turn_on(self, **kwargs: Any) -> None:
         self._is_on = True
         self.async_write_ha_state()
 
-    async def async_turn_off(self, **kwargs):
+    async def async_turn_off(self, **kwargs: Any) -> None:
         self._is_on = False
         self.async_write_ha_state()
 
-    async def async_added_to_hass(self):
+    async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         
         # Register with Manager
