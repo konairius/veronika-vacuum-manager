@@ -30,6 +30,11 @@ class VeronikaManager:
         
         # Map vacuum -> {segment_id: [switch_entity_id]}
         self._vacuum_segment_map = {}
+        
+        # Cache for entity IDs to avoid repeated registry lookups
+        # Structure: {cache_key: {'switch': id, 'disable': id, 'sensor': id, 'slug': slug, 'name': name, ...}}
+        self._entity_cache = {}
+        
         self._build_maps()
 
     def _build_maps(self):
@@ -50,15 +55,40 @@ class VeronikaManager:
             area_id = room[CONF_AREA]
             
             is_duplicate = area_counts[area_id] > 1
-            slug, _ = get_room_identity(self.hass, room, is_duplicate)
+            slug, display_name = get_room_identity(self.hass, room, is_duplicate)
             
-            unique_id = f"veronika_clean_{slug}"
+            # Build entity cache for this room
+            cache_key = f"{area_id}_{vac}_{'-'.join(map(str, segments))}"
             
-            # Resolve entity ID
-            switch_id = ent_reg.async_get_entity_id("switch", DOMAIN, unique_id)
-            if not switch_id:
-                # Fallback to default if not found (e.g. first run)
-                switch_id = f"switch.veronika_clean_{slug}"
+            if cache_key not in self._entity_cache:
+                unique_id = f"veronika_clean_{slug}"
+                switch_id = ent_reg.async_get_entity_id("switch", DOMAIN, unique_id)
+                if not switch_id:
+                    switch_id = f"switch.veronika_clean_{slug}"
+                
+                unique_id_disable = f"veronika_disable_{slug}"
+                disable_id = ent_reg.async_get_entity_id("switch", DOMAIN, unique_id_disable)
+                if not disable_id:
+                    disable_id = f"switch.veronika_disable_{slug}"
+                
+                unique_id_sensor = f"veronika_status_{slug}"
+                sensor_id = ent_reg.async_get_entity_id("binary_sensor", DOMAIN, unique_id_sensor)
+                if not sensor_id:
+                    sensor_id = f"binary_sensor.veronika_status_{slug}"
+                
+                self._entity_cache[cache_key] = {
+                    'switch': switch_id,
+                    'disable': disable_id,
+                    'sensor': sensor_id,
+                    'slug': slug,
+                    'name': display_name,
+                    'area': area_id,
+                    'vacuum': vac,
+                    'segments': segments
+                }
+            
+            # Build segment map using cached switch ID
+            switch_id = self._entity_cache[cache_key]['switch']
             
             if vac not in self._vacuum_segment_map:
                 self._vacuum_segment_map[vac] = {}
@@ -144,45 +174,26 @@ class VeronikaManager:
                     _LOGGER.error(f"Failed to reset switch {switch}: {err}")
 
     async def get_cleaning_plan(self, rooms_to_clean=None):
-        """
-        Calculate the cleaning plan based on current state.
+        """Calculate the cleaning plan based on current state.
         Returns a dict: { vacuum_entity_id: { 'rooms': [room_details], 'segments': [ids] } }
         """
-        plan = {} # vacuum -> {'rooms': [], 'segments': []}
-        ent_reg = er.async_get(self.hass)
-        area_reg = ar.async_get(self.hass)
+        plan = {}  # vacuum -> {'rooms': [], 'segments': []}
         
-        area_counts = Counter(r[CONF_AREA] for r in self.rooms)
-        
-        for room in self.rooms:
-            vac = room[CONF_VACUUM]
-            area_id = room[CONF_AREA]
-            segments = room.get(CONF_SEGMENTS, [])
+        # Use cached entity IDs instead of querying registry
+        for cache_key, cache_data in self._entity_cache.items():
+            vac = cache_data['vacuum']
+            area_id = cache_data['area']
+            segments = cache_data['segments']
             
-            is_duplicate = area_counts[area_id] > 1
-            slug, display_name = get_room_identity(self.hass, room, is_duplicate)
-
             # Initialize vacuum entry if missing
             if vac not in plan:
                 plan[vac] = {'rooms': [], 'segments': []}
-
-            # Switch
-            unique_id_switch = f"veronika_clean_{slug}"
-            switch_id = ent_reg.async_get_entity_id("switch", DOMAIN, unique_id_switch)
-            if not switch_id:
-                switch_id = f"switch.veronika_clean_{slug}"
-
-            # Disable Switch
-            unique_id_disable = f"veronika_disable_{slug}"
-            disable_id = ent_reg.async_get_entity_id("switch", DOMAIN, unique_id_disable)
-            if not disable_id:
-                disable_id = f"switch.veronika_disable_{slug}"
             
-            # Sensor
-            unique_id_sensor = f"veronika_status_{slug}"
-            sensor_id = ent_reg.async_get_entity_id("binary_sensor", DOMAIN, unique_id_sensor)
-            if not sensor_id:
-                sensor_id = f"binary_sensor.veronika_status_{slug}"
+            # Get entity IDs from cache
+            switch_id = cache_data['switch']
+            disable_id = cache_data['disable']
+            sensor_id = cache_data['sensor']
+            display_name = cache_data['name']
 
             # Get States
             switch_state = self.hass.states.get(switch_id)
@@ -310,19 +321,9 @@ class VeronikaManager:
             _LOGGER.error(f"Failed to send command to {vacuum_entity}: {err}")
 
     async def reset_all_toggles(self):
-        ent_reg = er.async_get(self.hass)
-        area_counts = Counter(r[CONF_AREA] for r in self.rooms)
-
-        for room in self.rooms:
-            area_id = room[CONF_AREA]
-            is_duplicate = area_counts[area_id] > 1
-            slug, _ = get_room_identity(self.hass, room, is_duplicate)
-
-            unique_id = f"veronika_clean_{slug}"
-            switch_id = ent_reg.async_get_entity_id("switch", DOMAIN, unique_id)
-            if not switch_id:
-                switch_id = f"switch.veronika_clean_{slug}"
-                
+        """Reset all cleaning toggles to ON."""
+        for cache_data in self._entity_cache.values():
+            switch_id = cache_data['switch']
             await self.hass.services.async_call(
                 "switch", SERVICE_TURN_ON, {ATTR_ENTITY_ID: switch_id}
             )
@@ -344,9 +345,10 @@ class VeronikaManager:
             unsub()
         self._unsubscribers.clear()
         
-        # Clear monitors
+        # Clear caches and monitors
         self._vacuum_monitors.clear()
         self._vacuum_segment_map.clear()
+        self._entity_cache.clear()
         
         _LOGGER.info("Veronika manager unloaded successfully")
 

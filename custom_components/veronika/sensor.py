@@ -30,40 +30,17 @@ class VeronikaPlanSensor(Entity):
         self._attr_icon = "mdi:robot-vacuum"
         self._state = "Ready"
         self._attributes = {}
-        self._entities_to_watch = set()
+        self._entities_to_watch = None  # Cache will be built in async_added_to_hass
 
     async def async_added_to_hass(self):
         """Register callbacks."""
-        # Resolve entities to watch
-        ent_reg = er.async_get(self.hass)
-        
-        area_counts = Counter(r[CONF_AREA] for r in self._manager.rooms)
-        
-        for room in self._manager.rooms:
-            area_id = room[CONF_AREA]
-            is_duplicate = area_counts[area_id] > 1
-            slug, _ = get_room_identity(self.hass, room, is_duplicate)
-            
-            # Switch
-            unique_id_switch = f"veronika_clean_{slug}"
-            switch_id = ent_reg.async_get_entity_id("switch", DOMAIN, unique_id_switch)
-            if not switch_id:
-                switch_id = f"switch.veronika_clean_{slug}"
-            self._entities_to_watch.add(switch_id)
-
-            # Disable Switch
-            unique_id_disable = f"veronika_disable_{slug}"
-            disable_id = ent_reg.async_get_entity_id("switch", DOMAIN, unique_id_disable)
-            if not disable_id:
-                disable_id = f"switch.veronika_disable_{slug}"
-            self._entities_to_watch.add(disable_id)
-            
-            # Binary Sensor
-            unique_id_sensor = f"veronika_status_{slug}"
-            sensor_id = ent_reg.async_get_entity_id("binary_sensor", DOMAIN, unique_id_sensor)
-            if not sensor_id:
-                sensor_id = f"binary_sensor.veronika_status_{slug}"
-            self._entities_to_watch.add(sensor_id)
+        # Build watch list from manager's entity cache (only once)
+        if self._entities_to_watch is None:
+            self._entities_to_watch = set()
+            for cache_data in self._manager._entity_cache.values():
+                self._entities_to_watch.add(cache_data['switch'])
+                self._entities_to_watch.add(cache_data['disable'])
+                self._entities_to_watch.add(cache_data['sensor'])
 
         self.async_on_remove(
             async_track_state_change_event(
