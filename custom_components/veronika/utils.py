@@ -26,15 +26,22 @@ def get_area_entities(hass: HomeAssistant, area_id: str) -> List[str]:
 
 def get_entity_device_class(hass: HomeAssistant, entity_id: str) -> Optional[str]:
     """Get device class for an entity, preferring state attributes over registry."""
-    ent_reg: er.EntityRegistry = er.async_get(hass)
-    state = hass.states.get(entity_id)
-    entry: Optional[er.RegistryEntry] = ent_reg.async_get(entity_id)
+    try:
+        ent_reg: er.EntityRegistry = er.async_get(hass)
+        state = hass.states.get(entity_id)
+        entry: Optional[er.RegistryEntry] = ent_reg.async_get(entity_id)
+    except Exception as err:
+        _LOGGER.warning(f"Error accessing registry for {entity_id}: {err}")
+        return None
     
     # Prefer state attributes (allows runtime overrides)
     if state:
-        device_class = state.attributes.get("device_class")
-        if device_class:
-            return device_class
+        try:
+            device_class = state.attributes.get("device_class")
+            if device_class:
+                return device_class
+        except (AttributeError, KeyError) as err:
+            _LOGGER.debug(f"Error getting device_class from state for {entity_id}: {err}")
     
     # Fallback to registry
     if entry:
@@ -53,21 +60,30 @@ def discover_occupancy_sensors(hass: HomeAssistant, area_id: str, platform_filte
     Returns:
         List of entity IDs with occupancy device class
     """
-    ent_reg: er.EntityRegistry = er.async_get(hass)
-    area_entities: List[str] = get_area_entities(hass, area_id)
+    try:
+        ent_reg: er.EntityRegistry = er.async_get(hass)
+        area_entities: List[str] = get_area_entities(hass, area_id)
+    except Exception as err:
+        _LOGGER.error(f"Failed to get area entities for {area_id}: {err}")
+        return []
+        
     occupancy_sensors: List[str] = []
     
     for entity_id in area_entities:
-        entry = ent_reg.async_get(entity_id)
-        
-        # Check platform filter
-        if platform_filter and (not entry or entry.platform != platform_filter):
+        try:
+            entry = ent_reg.async_get(entity_id)
+            
+            # Check platform filter
+            if platform_filter and (not entry or entry.platform != platform_filter):
+                continue
+            
+            # Check device class
+            device_class = get_entity_device_class(hass, entity_id)
+            if device_class == "occupancy":
+                occupancy_sensors.append(entity_id)
+        except Exception as err:
+            _LOGGER.debug(f"Error processing entity {entity_id}: {err}")
             continue
-        
-        # Check device class
-        device_class = get_entity_device_class(hass, entity_id)
-        if device_class == "occupancy":
-            occupancy_sensors.append(entity_id)
     
     return occupancy_sensors
 
@@ -84,11 +100,19 @@ def discover_door_sensors(hass: HomeAssistant, area_ids: List[str]) -> List[str]
     door_sensors: List[str] = []
     
     for area_id in area_ids:
-        area_entities = get_area_entities(hass, area_id)
-        for entity_id in area_entities:
-            device_class = get_entity_device_class(hass, entity_id)
-            if device_class == "door":
-                door_sensors.append(entity_id)
+        try:
+            area_entities: List[str] = get_area_entities(hass, area_id)
+            for entity_id in area_entities:
+                try:
+                    device_class = get_entity_device_class(hass, entity_id)
+                    if device_class == "door":
+                        door_sensors.append(entity_id)
+                except Exception as err:
+                    _LOGGER.debug(f"Error checking device class for {entity_id}: {err}")
+                    continue
+        except Exception as err:
+            _LOGGER.warning(f"Error discovering door sensors in area {area_id}: {err}")
+            continue
     
     return door_sensors
 
@@ -106,9 +130,14 @@ def get_room_identity(hass: HomeAssistant, room: Dict[str, Any], is_duplicate: b
         Tuple of (slug, display_name)
     """
     area_id: str = room[CONF_AREA]
-    area_reg: ar.AreaRegistry = ar.async_get(hass)
-    area_entry: Optional[ar.AreaEntry] = area_reg.async_get_area(area_id)
-    ha_area_name: str = area_entry.name if area_entry else area_id
+    
+    try:
+        area_reg: ar.AreaRegistry = ar.async_get(hass)
+        area_entry: Optional[ar.AreaEntry] = area_reg.async_get_area(area_id)
+        ha_area_name: str = area_entry.name if area_entry else area_id
+    except Exception as err:
+        _LOGGER.warning(f"Error accessing area registry for {area_id}: {err}")
+        ha_area_name = area_id
     
     if not is_duplicate:
         return slugify(area_id), ha_area_name
@@ -137,8 +166,12 @@ def get_room_identity(hass: HomeAssistant, room: Dict[str, Any], is_duplicate: b
             candidates.extend([e.entity_id for e in siblings if e.entity_id != vac_id])
             
         for entity_id in candidates:
-            state = hass.states.get(entity_id)
-            if not state:
+            try:
+                state = hass.states.get(entity_id)
+                if not state:
+                    continue
+            except Exception as err:
+                _LOGGER.debug(f"Error getting state for {entity_id}: {err}")
                 continue
                 
             # Try multiple common attribute names

@@ -66,11 +66,20 @@ class VeronikaSwitch(SwitchEntity, RestoreEntity):
         await super().async_added_to_hass()
         
         # Register with Manager
-        manager = self.hass.data.get(f"{DOMAIN}_manager")
-        if manager:
-            type_key = "switch_clean" if self._type == "clean" else "switch_disable"
-            manager.register_entity(type_key, self._room_slug, self.entity_id)
+        try:
+            manager = self.hass.data.get(f"{DOMAIN}_manager")
+            if manager:
+                type_key = "switch_clean" if self._type == "clean" else "switch_disable"
+                manager.register_entity(type_key, self._room_slug, self.entity_id)
+            else:
+                _LOGGER.warning(f"Manager not found for switch {self._attr_name}")
+        except Exception as err:
+            _LOGGER.error(f"Failed to register switch with manager: {err}")
             
-        state = await self.async_get_last_state()
-        if state:
-            self._is_on = state.state == "on"
+        try:
+            state = await self.async_get_last_state()
+            if state:
+                self._is_on = state.state == "on"
+        except Exception as err:
+            _LOGGER.warning(f"Failed to restore state for {self._attr_name}: {err}")
+            # Default to False if restore fails

@@ -63,7 +63,13 @@ class VeronikaPlanSensor(Entity):
 
     async def async_update(self) -> None:
         """Update the sensor state."""
-        plan: Dict[str, Dict[str, Any]] = await self._manager.get_cleaning_plan()
+        try:
+            plan: Dict[str, Dict[str, Any]] = await self._manager.get_cleaning_plan()
+        except Exception as err:
+            _LOGGER.error(f"Failed to get cleaning plan: {err}")
+            self._state = "Error"
+            self._attributes = {"error": str(err)}
+            return
         
         total_cleaning: int = 0
         vacuums_data: Dict[str, Dict[str, Any]] = {}
@@ -82,7 +88,9 @@ class VeronikaPlanSensor(Entity):
         self._state = f"{total_cleaning} Rooms Scheduled"
         self._attributes = {
             "plan": vacuums_data,
-            "total_cleaning": total_cleaning
+            "total_cleaning": total_cleaning,
+            "last_error": self._manager._last_error,
+            "error_count": self._manager._error_count
         }
 
     @property

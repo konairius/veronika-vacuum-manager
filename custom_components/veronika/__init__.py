@@ -88,45 +88,73 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
     hass.data[DOMAIN] = conf
 
     # Initialize Manager
-    from .manager import VeronikaManager
-    manager = VeronikaManager(hass, conf)
-    await manager.async_setup()
-    hass.data[f"{DOMAIN}_manager"] = manager
+    try:
+        from .manager import VeronikaManager
+        manager = VeronikaManager(hass, conf)
+        await manager.async_setup()
+        hass.data[f"{DOMAIN}_manager"] = manager
+    except Exception as err:
+        _LOGGER.error(f"Failed to initialize Veronika manager: {err}", exc_info=True)
+        return False
 
     # Load platforms
-    hass.async_create_task(async_load_platform(hass, "binary_sensor", DOMAIN, {}, config))
-    hass.async_create_task(async_load_platform(hass, "switch", DOMAIN, {}, config))
-    hass.async_create_task(async_load_platform(hass, "sensor", DOMAIN, {}, config))
+    try:
+        hass.async_create_task(async_load_platform(hass, "binary_sensor", DOMAIN, {}, config))
+        hass.async_create_task(async_load_platform(hass, "switch", DOMAIN, {}, config))
+        hass.async_create_task(async_load_platform(hass, "sensor", DOMAIN, {}, config))
+    except Exception as err:
+        _LOGGER.error(f"Failed to load platforms: {err}", exc_info=True)
+        return False
     
     # Register static path for card
     import os
     from homeassistant.components.http import StaticPathConfig
 
-    component_dir = os.path.dirname(__file__)
-    await hass.http.async_register_static_paths([
-        StaticPathConfig(
-            "/veronika/veronika-plan-card.js",
-            os.path.join(component_dir, "www", "veronika-plan-card.js"),
-            True
-        )
-    ])
+    try:
+        component_dir = os.path.dirname(__file__)
+        await hass.http.async_register_static_paths([
+            StaticPathConfig(
+                "/veronika/veronika-plan-card.js",
+                os.path.join(component_dir, "www", "veronika-plan-card.js"),
+                True
+            )
+        ])
+    except Exception as err:
+        _LOGGER.warning(f"Failed to register static path for card: {err}")
+        # Continue without card - not critical
 
     # Register services
     async def handle_reset_toggles(call: ServiceCall) -> None:
-        await manager.reset_all_toggles()
+        try:
+            await manager.reset_all_toggles()
+        except Exception as err:
+            _LOGGER.error(f"Error in reset_all_toggles service: {err}", exc_info=True)
+            raise
 
     async def handle_clean_all(call: ServiceCall) -> None:
-        await manager.start_cleaning()
+        try:
+            await manager.start_cleaning()
+        except Exception as err:
+            _LOGGER.error(f"Error in clean_all_enabled service: {err}", exc_info=True)
+            raise
 
     async def handle_clean_room(call: ServiceCall) -> None:
-        area: Optional[str] = call.data.get("area")
-        if area:
-            await manager.start_cleaning([area])
-        else:
-            _LOGGER.warning("No area specified for clean_specific_room service")
+        try:
+            area: Optional[str] = call.data.get("area")
+            if area:
+                await manager.start_cleaning([area])
+            else:
+                _LOGGER.warning("No area specified for clean_specific_room service")
+        except Exception as err:
+            _LOGGER.error(f"Error in clean_specific_room service: {err}", exc_info=True)
+            raise
 
     async def handle_stop_cleaning(call: ServiceCall) -> None:
-        await manager.stop_cleaning()
+        try:
+            await manager.stop_cleaning()
+        except Exception as err:
+            _LOGGER.error(f"Error in stop_cleaning service: {err}", exc_info=True)
+            raise
 
     hass.services.async_register(DOMAIN, "reset_all_toggles", handle_reset_toggles)
     hass.services.async_register(DOMAIN, "clean_all_enabled", handle_clean_all)

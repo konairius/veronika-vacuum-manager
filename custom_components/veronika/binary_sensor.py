@@ -108,9 +108,14 @@ class VeronikaRoomSensor(BinarySensorEntity):
         ent_reg: er.EntityRegistry = er.async_get(self.hass)
         
         # Register with Manager
-        manager = self.hass.data.get(f"{DOMAIN}_manager")
-        if manager:
-            manager.register_entity("binary_sensor", self._slug, self.entity_id)
+        try:
+            manager = self.hass.data.get(f"{DOMAIN}_manager")
+            if manager:
+                manager.register_entity("binary_sensor", self._slug, self.entity_id)
+            else:
+                _LOGGER.warning(f"Manager not found for {self._name}")
+        except Exception as err:
+            _LOGGER.error(f"Failed to register entity with manager: {err}")
 
         clean_unique_id = f"veronika_clean_{self._slug}"
         disable_unique_id = f"veronika_disable_{self._slug}"
@@ -124,16 +129,25 @@ class VeronikaRoomSensor(BinarySensorEntity):
             self._disable_switch = disable_entry
 
         # Discover sensors
-        await self._discover_sensors()
+        try:
+            await self._discover_sensors()
+        except Exception as err:
+            _LOGGER.error(f"Failed to discover sensors for {self._name}: {err}")
+            # Continue with empty sensor lists
         
         # Subscribe to state changes
-        self.async_on_remove(
-            async_track_state_change_event(
-                self.hass, 
-                [self._clean_switch, self._disable_switch, self._vacuum] + self._doors + self._occupancy,
-                self._on_state_change
+        try:
+            entities_to_track = [self._clean_switch, self._disable_switch, self._vacuum] + self._doors + self._occupancy
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass, 
+                    entities_to_track,
+                    self._on_state_change
+                )
             )
-        )
+        except Exception as err:
+            _LOGGER.error(f"Failed to set up state tracking for {self._name}: {err}")
+        
         self._update_state()
 
     async def async_will_remove_from_hass(self) -> None:
@@ -164,10 +178,17 @@ class VeronikaRoomSensor(BinarySensorEntity):
         # Check Occupancy
         is_occupied = False
         for sens in self._occupancy:
-            st = self.hass.states.get(sens)
-            if st and st.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN) and st.state == STATE_ON:
-                is_occupied = True
-                break
+            try:
+                st = self.hass.states.get(sens)
+                if st is None:
+                    _LOGGER.debug(f"Occupancy sensor {sens} state not found for {self._name}")
+                    continue
+                if st.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN) and st.state == STATE_ON:
+                    is_occupied = True
+                    break
+            except Exception as err:
+                _LOGGER.warning(f"Error checking occupancy sensor {sens}: {err}")
+                continue
         
         if is_occupied:
             self._status_reason = "Occupied"
@@ -208,29 +229,41 @@ class VeronikaRoomSensor(BinarySensorEntity):
         
         # Get Vacuum Area
         vacuum_area = None
-        vac_entry = ent_reg.async_get(self._vacuum)
-        if vac_entry and vac_entry.area_id:
-            vacuum_area = vac_entry.area_id
-        elif vac_entry and vac_entry.device_id:
-            dev = dev_reg.async_get(vac_entry.device_id)
-            if dev:
-                vacuum_area = dev.area_id
+        try:
+            vac_entry = ent_reg.async_get(self._vacuum)
+            if vac_entry and vac_entry.area_id:
+                vacuum_area = vac_entry.area_id
+            elif vac_entry and vac_entry.device_id:
+                dev = dev_reg.async_get(vac_entry.device_id)
+                if dev:
+                    vacuum_area = dev.area_id
+        except Exception as err:
+            _LOGGER.warning(f"Error determining vacuum area for {self._vacuum}: {err}")
         
         target_area = self._area
         
         for door in self._doors:
-            st = self.hass.states.get(door)
-            if st and st.state == STATE_OFF: # Door Closed
-                # Find area of this door
-                door_area = None
-                d_entry = ent_reg.async_get(door)
-                if d_entry:
-                    door_area = d_entry.area_id
-                    # Fallback to device area if entity area is not set
-                    if not door_area and d_entry.device_id:
-                        dev = dev_reg.async_get(d_entry.device_id)
-                        if dev:
-                            door_area = dev.area_id
+            try:
+                st = self.hass.states.get(door)
+                if not st:
+                    _LOGGER.debug(f"Door sensor {door} state not found for {self._name}")
+                    continue
+                    
+                if st.state == STATE_OFF: # Door Closed
+                    # Find area of this door
+                    door_area = None
+                    try:
+                        d_entry = ent_reg.async_get(door)
+                        if d_entry:
+                            door_area = d_entry.area_id
+                            # Fallback to device area if entity area is not set
+                            if not door_area and d_entry.device_id:
+                                dev = dev_reg.async_get(d_entry.device_id)
+                                if dev:
+                                    door_area = dev.area_id
+                    except Exception as err:
+                        _LOGGER.warning(f"Error getting area for door {door}: {err}")
+                        continue
                 
                 # 1. Target Room Door
                 if door_area == target_area and vacuum_area != target_area:
@@ -245,7 +278,6 @@ class VeronikaRoomSensor(BinarySensorEntity):
                     self._is_on = False
                     self.async_write_ha_state()
                     return
-
-        self._status_reason = "Ready"
-        self._is_on = True
-        self.async_write_ha_state()
+            except Exception as err:
+                _LOGGER.warning(f"Error processing door sensor {door}: {err}")
+                continue

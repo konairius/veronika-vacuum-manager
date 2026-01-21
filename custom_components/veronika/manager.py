@@ -12,6 +12,8 @@ from homeassistant.const import (
     SERVICE_TURN_ON
 )
 from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
+from homeassistant.components.persistent_notification import async_create as async_create_notification
 
 from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_SEGMENTS, CONF_DEBUG, CONF_AREA, CONF_MIN_SEGMENT_DURATION, CONF_SEGMENT_ATTRIBUTE
 from .utils import get_room_identity
@@ -44,6 +46,10 @@ class VeronikaManager:
         # Cache for entity IDs to avoid repeated registry lookups
         # Structure: {cache_key: {'switch': id, 'disable': id, 'sensor': id, 'slug': slug, 'name': name, ...}}
         self._entity_cache: Dict[str, Dict[str, Any]] = {}
+        
+        # Error tracking
+        self._last_error: Optional[str] = None
+        self._error_count: int = 0
         
         self._build_maps()
 
@@ -207,16 +213,58 @@ class VeronikaManager:
             return
 
         # Find switches to turn off
-        if vacuum_id in self._vacuum_segment_map:
-            switches = self._vacuum_segment_map[vacuum_id].get(segment_id, [])
-            for switch in switches:
-                _LOGGER.info(f"Resetting switch {switch}")
-                try:
-                    await self.hass.services.async_call(
-                        "switch", SERVICE_TURN_OFF, {ATTR_ENTITY_ID: switch}
-                    )
-                except Exception as err:
-                    _LOGGER.error(f"Failed to reset switch {switch}: {err}")
+        if vacuum_id not in self._vacuum_segment_map:
+            _LOGGER.warning(f"Vacuum {vacuum_id} not found in segment map")
+            return
+            
+        switches = self._vacuum_segment_map[vacuum_id].get(segment_id, [])
+        if not switches:
+            _LOGGER.debug(f"No switches configured for vacuum {vacuum_id} segment {segment_id}")
+            return
+            
+        failed_switches: List[str] = []
+        for switch in switches:
+            _LOGGER.info(f"Resetting switch {switch}")
+            try:
+                # Retry logic for transient failures
+                for attempt in range(3):
+                    try:
+                        await self.hass.services.async_call(
+                            "switch", SERVICE_TURN_OFF, {ATTR_ENTITY_ID: switch}, blocking=True
+                        )
+                        break
+                    except (asyncio.TimeoutError, Exception) as err:
+                        if attempt < 2:
+                            _LOGGER.warning(f"Retry {attempt + 1}/3 resetting switch {switch}: {err}")
+                            await asyncio.sleep(1)
+                        else:
+                            raise
+            except ServiceNotFound as err:
+                _LOGGER.error(f"Switch service not found for {switch}: {err}")
+                failed_switches.append(switch)
+            except Exception as err:
+                _LOGGER.error(f"Failed to reset switch {switch} after 3 attempts: {err}")
+                failed_switches.append(switch)
+                self._error_count += 1
+                self._last_error = f"Failed to reset {switch}: {str(err)}"
+        
+        if failed_switches:
+            await self._notify_error(
+                f"Failed to reset {len(failed_switches)} switch(es) after cleaning segment {segment_id}",
+                f"Switches: {', '.join(failed_switches)}"
+            )
+
+    async def _notify_error(self, title: str, message: str) -> None:
+        """Create a persistent notification for errors."""
+        try:
+            await async_create_notification(
+                self.hass,
+                message=message,
+                title=f"Veronika: {title}",
+                notification_id=f"veronika_error_{int(time.time())}"
+            )
+        except Exception as err:
+            _LOGGER.error(f"Failed to create error notification: {err}")
 
     async def get_cleaning_plan(self, rooms_to_clean: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
         """Calculate the cleaning plan based on current state.
@@ -235,20 +283,39 @@ class VeronikaManager:
                 plan[vac] = {'rooms': [], 'segments': []}
             
             # Get entity IDs from cache
-            switch_id = cache_data['switch']
-            disable_id = cache_data['disable']
-            sensor_id = cache_data['sensor']
-            display_name = cache_data['name']
-
-            # Get States
-            switch_state = self.hass.states.get(switch_id)
-            disable_state = self.hass.states.get(disable_id)
-            sensor_state = self.hass.states.get(sensor_id)
+            switch_id = cache_data.get('switch')
+            disable_id = cache_data.get('disable')
+            sensor_id = cache_data.get('sensor')
+            display_name = cache_data.get('name', 'Unknown')
             
-            is_enabled = switch_state and switch_state.state == "on"
-            is_disabled_override = disable_state and disable_state.state == "on"
-            is_ready = sensor_state and sensor_state.state == "on"
-            reason = sensor_state.attributes.get("status_reason", "Unknown") if sensor_state else "Sensor Unavailable"
+            # Skip if essential entities are missing
+            if not switch_id or not sensor_id:
+                _LOGGER.warning(f"Missing essential entities for area {area_id}, skipping")
+                continue
+
+            # Get States with error handling
+            try:
+                switch_state = self.hass.states.get(switch_id)
+                disable_state = self.hass.states.get(disable_id) if disable_id else None
+                sensor_state = self.hass.states.get(sensor_id)
+            except Exception as err:
+                _LOGGER.error(f"Error accessing states for area {area_id}: {err}")
+                continue
+            
+            # Safe state checks
+            is_enabled = switch_state is not None and switch_state.state == "on"
+            is_disabled_override = disable_state is not None and disable_state.state == "on"
+            is_ready = sensor_state is not None and sensor_state.state == "on"
+            
+            # Safe attribute access
+            reason = "Unknown"
+            if sensor_state:
+                try:
+                    reason = sensor_state.attributes.get("status_reason", "Unknown")
+                except (AttributeError, KeyError):
+                    reason = "Sensor Error"
+            else:
+                reason = "Sensor Unavailable"
 
             # Determine if it will be cleaned
             will_clean = False
@@ -303,30 +370,71 @@ class VeronikaManager:
         Start cleaning for specific rooms or all enabled rooms.
         rooms_to_clean: list of room names (optional)
         """
-        # 1. Identify what to clean
-        plan: Dict[str, Dict[str, Any]] = await self.get_cleaning_plan(rooms_to_clean)
+        try:
+            # 1. Identify what to clean
+            plan: Dict[str, Dict[str, Any]] = await self.get_cleaning_plan(rooms_to_clean)
+            
+            if not plan:
+                _LOGGER.warning("No cleaning plan generated, nothing to clean")
+                return
 
-        # 2. Execute Plan
-        for vac, data in plan.items():
-            segments = data['segments']
-            if not segments:
-                continue
+            # 2. Execute Plan
+            failed_vacuums: List[str] = []
+            for vac, data in plan.items():
+                segments = data.get('segments', [])
+                if not segments:
+                    _LOGGER.debug(f"No segments to clean for {vac}")
+                    continue
+                
+                # Validate vacuum exists
+                if not self.hass.states.get(vac):
+                    _LOGGER.error(f"Vacuum entity {vac} not found")
+                    failed_vacuums.append(vac)
+                    continue
+                
+                _LOGGER.info(f"Starting cleaning for {vac} segments: {segments}")
+                
+                try:
+                    await self._send_vacuum_command(vac, segments)
+                except Exception as err:
+                    _LOGGER.error(f"Failed to send cleaning command to {vac}: {err}")
+                    failed_vacuums.append(vac)
             
-            _LOGGER.info(f"Starting cleaning for {vac} segments: {segments}")
-            
-            await self._send_vacuum_command(vac, segments)
+            if failed_vacuums:
+                await self._notify_error(
+                    "Cleaning Start Failed",
+                    f"Failed to start cleaning for: {', '.join(failed_vacuums)}"
+                )
+        except Exception as err:
+            _LOGGER.error(f"Unexpected error in start_cleaning: {err}", exc_info=True)
+            self._last_error = str(err)
+            self._error_count += 1
+            await self._notify_error("Cleaning Error", f"Unexpected error: {str(err)}")
+            raise HomeAssistantError(f"Failed to start cleaning: {err}") from err
 
     async def _get_vacuum_command_payload(self, vacuum_entity: str, segments: List[int]) -> Dict[str, Any]:
+        """Generate vacuum command payload based on manufacturer."""
+        if not segments:
+            raise ValueError(f"No segments provided for {vacuum_entity}")
+            
         # Determine manufacturer
-        ent_reg: er.EntityRegistry = er.async_get(self.hass)
-        dev_reg: dr.DeviceRegistry = dr.async_get(self.hass)
+        try:
+            ent_reg: er.EntityRegistry = er.async_get(self.hass)
+            dev_reg: dr.DeviceRegistry = dr.async_get(self.hass)
+        except Exception as err:
+            _LOGGER.error(f"Failed to access registries: {err}")
+            raise HomeAssistantError(f"Registry access error: {err}") from err
         
         manufacturer: str = ""
         entry: Optional[er.RegistryEntry] = ent_reg.async_get(vacuum_entity)
         if entry and entry.device_id:
             device = dev_reg.async_get(entry.device_id)
-            if device:
+            if device and device.manufacturer:
                 manufacturer = device.manufacturer
+            else:
+                _LOGGER.warning(f"No device found for vacuum {vacuum_entity}")
+        else:
+            _LOGGER.warning(f"No registry entry found for vacuum {vacuum_entity}")
 
         if manufacturer == "Roborock":
             return {
@@ -352,36 +460,109 @@ class VeronikaManager:
             }
 
     async def _send_vacuum_command(self, vacuum_entity: str, segments: List[int]) -> None:
-        payload: Dict[str, Any] = await self._get_vacuum_command_payload(vacuum_entity, segments)
-        service_call: List[str] = payload["service"].split(".")
-        domain: str = service_call[0]
-        service: str = service_call[1]
-        
+        """Send cleaning command to vacuum with retry logic."""
         try:
-            await self.hass.services.async_call(
-                domain, service, payload["data"]
-            )
-            _LOGGER.info(f"Successfully sent command to {vacuum_entity} for segments {segments}")
+            payload: Dict[str, Any] = await self._get_vacuum_command_payload(vacuum_entity, segments)
         except Exception as err:
-            _LOGGER.error(f"Failed to send command to {vacuum_entity}: {err}")
+            _LOGGER.error(f"Failed to generate command payload for {vacuum_entity}: {err}")
+            raise HomeAssistantError(f"Command generation failed: {err}") from err
+            
+        if "service" not in payload or "data" not in payload:
+            raise HomeAssistantError(f"Invalid payload structure for {vacuum_entity}")
+            
+        try:
+            service_call: List[str] = payload["service"].split(".")
+            if len(service_call) != 2:
+                raise ValueError(f"Invalid service format: {payload['service']}")
+            domain: str = service_call[0]
+            service: str = service_call[1]
+        except (KeyError, ValueError, IndexError) as err:
+            _LOGGER.error(f"Invalid service in payload: {err}")
+            raise HomeAssistantError(f"Service parsing error: {err}") from err
+        
+        # Retry logic for service calls
+        last_error: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                await self.hass.services.async_call(
+                    domain, service, payload["data"], blocking=True
+                )
+                _LOGGER.info(f"Successfully sent command to {vacuum_entity} for segments {segments}")
+                return
+            except ServiceNotFound as err:
+                _LOGGER.error(f"Service {domain}.{service} not found for {vacuum_entity}: {err}")
+                raise HomeAssistantError(f"Service not available: {domain}.{service}") from err
+            except asyncio.TimeoutError as err:
+                last_error = err
+                if attempt < 2:
+                    _LOGGER.warning(f"Timeout on attempt {attempt + 1}/3 for {vacuum_entity}, retrying...")
+                    await asyncio.sleep(2)
+                else:
+                    _LOGGER.error(f"Service call timed out after 3 attempts for {vacuum_entity}")
+            except Exception as err:
+                last_error = err
+                if attempt < 2:
+                    _LOGGER.warning(f"Error on attempt {attempt + 1}/3 for {vacuum_entity}: {err}, retrying...")
+                    await asyncio.sleep(2)
+                else:
+                    _LOGGER.error(f"Failed to send command to {vacuum_entity} after 3 attempts: {err}")
+        
+        # If we get here, all retries failed
+        self._error_count += 1
+        self._last_error = f"Failed to command {vacuum_entity}: {str(last_error)}"
+        raise HomeAssistantError(f"Failed to send command after 3 attempts: {last_error}") from last_error
 
     async def reset_all_toggles(self) -> None:
         """Reset all cleaning toggles to ON."""
+        failed_switches: List[str] = []
+        
         for cache_data in self._entity_cache.values():
-            switch_id: Optional[str] = cache_data['switch']
-            await self.hass.services.async_call(
-                "switch", SERVICE_TURN_ON, {ATTR_ENTITY_ID: switch_id}
+            switch_id: Optional[str] = cache_data.get('switch')
+            if not switch_id:
+                continue
+                
+            try:
+                await self.hass.services.async_call(
+                    "switch", SERVICE_TURN_ON, {ATTR_ENTITY_ID: switch_id}, blocking=True
+                )
+            except Exception as err:
+                _LOGGER.error(f"Failed to reset toggle {switch_id}: {err}")
+                failed_switches.append(switch_id)
+        
+        if failed_switches:
+            await self._notify_error(
+                "Toggle Reset Failed",
+                f"Failed to reset {len(failed_switches)} toggle(s): {', '.join(failed_switches)}"
             )
 
     async def stop_cleaning(self) -> None:
+        """Stop all active vacuums and return them to base."""
         vacuums: Set[str] = set(r[CONF_VACUUM] for r in self.rooms)
+        failed_vacuums: List[str] = []
+        
         for vac in vacuums:
-            state = self.hass.states.get(vac)
-            if state and state.state == "cleaning":
-                await self.hass.services.async_call(
-                    "vacuum", "return_to_base",
-                    {ATTR_ENTITY_ID: vac}
-                )
+            try:
+                state = self.hass.states.get(vac)
+                if not state:
+                    _LOGGER.warning(f"Vacuum {vac} state not found")
+                    continue
+                    
+                if state.state == "cleaning":
+                    await self.hass.services.async_call(
+                        "vacuum", "return_to_base",
+                        {ATTR_ENTITY_ID: vac},
+                        blocking=True
+                    )
+                    _LOGGER.info(f"Sent return to base command to {vac}")
+            except Exception as err:
+                _LOGGER.error(f"Failed to stop vacuum {vac}: {err}")
+                failed_vacuums.append(vac)
+        
+        if failed_vacuums:
+            await self._notify_error(
+                "Stop Cleaning Failed",
+                f"Failed to stop {len(failed_vacuums)} vacuum(s): {', '.join(failed_vacuums)}"
+            )
 
     async def async_unload(self) -> None:
         """Cleanup when unloading the integration."""
