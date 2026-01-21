@@ -8,7 +8,7 @@ from homeassistant.const import STATE_ON, STATE_OFF, STATE_UNAVAILABLE, STATE_UN
 from homeassistant.helpers.event import async_call_later
 
 from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_AREA, CONF_SEGMENTS, CONF_OCCUPANCY_COOLDOWN
-from .utils import get_room_identity
+from .utils import get_room_identity, discover_occupancy_sensors, discover_door_sensors
 from collections import Counter
 
 _LOGGER = logging.getLogger(__name__)
@@ -121,61 +121,12 @@ class VeronikaRoomSensor(BinarySensorEntity):
             self._cooldown_timer = None
 
     async def _discover_sensors(self):
-        # 1. Occupancy
-        # Use robust discovery logic similar to HA core templates
+        """Discover occupancy and door sensors for this room."""
+        # Discover occupancy sensors in the room's area
+        self._occupancy = discover_occupancy_sensors(self.hass, self._area, platform_filter="magic_areas")
         
-        ent_reg = er.async_get(self.hass)
-        dev_reg = dr.async_get(self.hass)
-        
-        def get_area_entities(area_id):
-            entities = set()
-            # Entities directly in area
-            for entry in er.async_entries_for_area(ent_reg, area_id):
-                entities.add(entry.entity_id)
-            
-            # Entities in devices in area
-            for device in dr.async_entries_for_area(dev_reg, area_id):
-                for entry in er.async_entries_for_device(ent_reg, device.id):
-                    if entry.area_id is None:
-                        entities.add(entry.entity_id)
-            return list(entities)
-
-        # Occupancy
-        area_ents = get_area_entities(self._area)
-        self._occupancy = []
-        for ent_id in area_ents:
-            entry = ent_reg.async_get(ent_id)
-            state = self.hass.states.get(ent_id)
-            
-            # Check if it is from magic_areas
-            is_magic = entry and entry.platform == "magic_areas"
-            
-            # Check device class (prefer state attributes for overrides)
-            device_class = None
-            if state:
-                device_class = state.attributes.get("device_class")
-            elif entry:
-                device_class = entry.device_class or entry.original_device_class
-                
-            if is_magic and device_class == "occupancy":
-                 self._occupancy.append(ent_id)
-
-        # Doors
-        self._doors = []
-        for area_id in self._vacuum_areas:
-            area_ents = get_area_entities(area_id)
-            for ent_id in area_ents:
-                entry = ent_reg.async_get(ent_id)
-                state = self.hass.states.get(ent_id)
-                
-                device_class = None
-                if state:
-                    device_class = state.attributes.get("device_class")
-                elif entry:
-                    device_class = entry.device_class or entry.original_device_class
-                
-                if device_class == "door":
-                    self._doors.append(ent_id)
+        # Discover door sensors in all areas the vacuum can access
+        self._doors = discover_door_sensors(self.hass, list(self._vacuum_areas))
 
     @callback
     def _on_state_change(self, event):

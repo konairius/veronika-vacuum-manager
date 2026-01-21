@@ -5,6 +5,91 @@ from .const import CONF_AREA, CONF_VACUUM, CONF_SEGMENTS
 
 _LOGGER = logging.getLogger(__name__)
 
+def get_area_entities(hass, area_id):
+    """Get all entity IDs in an area (direct and via devices)."""
+    ent_reg = er.async_get(hass)
+    dev_reg = dr.async_get(hass)
+    
+    entities = set()
+    # Entities directly in area
+    for entry in er.async_entries_for_area(ent_reg, area_id):
+        entities.add(entry.entity_id)
+    
+    # Entities in devices in area
+    for device in dr.async_entries_for_area(dev_reg, area_id):
+        for entry in er.async_entries_for_device(ent_reg, device.id):
+            if entry.area_id is None:
+                entities.add(entry.entity_id)
+    return list(entities)
+
+def get_entity_device_class(hass, entity_id):
+    """Get device class for an entity, preferring state attributes over registry."""
+    ent_reg = er.async_get(hass)
+    state = hass.states.get(entity_id)
+    entry = ent_reg.async_get(entity_id)
+    
+    # Prefer state attributes (allows runtime overrides)
+    if state:
+        device_class = state.attributes.get("device_class")
+        if device_class:
+            return device_class
+    
+    # Fallback to registry
+    if entry:
+        return entry.device_class or entry.original_device_class
+    
+    return None
+
+def discover_occupancy_sensors(hass, area_id, platform_filter="magic_areas"):
+    """Discover occupancy sensors in an area.
+    
+    Args:
+        hass: HomeAssistant instance
+        area_id: Area ID to search
+        platform_filter: Platform to filter by (None to accept all)
+    
+    Returns:
+        List of entity IDs with occupancy device class
+    """
+    ent_reg = er.async_get(hass)
+    area_entities = get_area_entities(hass, area_id)
+    occupancy_sensors = []
+    
+    for entity_id in area_entities:
+        entry = ent_reg.async_get(entity_id)
+        
+        # Check platform filter
+        if platform_filter and (not entry or entry.platform != platform_filter):
+            continue
+        
+        # Check device class
+        device_class = get_entity_device_class(hass, entity_id)
+        if device_class == "occupancy":
+            occupancy_sensors.append(entity_id)
+    
+    return occupancy_sensors
+
+def discover_door_sensors(hass, area_ids):
+    """Discover door sensors across multiple areas.
+    
+    Args:
+        hass: HomeAssistant instance
+        area_ids: List of area IDs to search
+    
+    Returns:
+        List of entity IDs with door device class
+    """
+    door_sensors = []
+    
+    for area_id in area_ids:
+        area_entities = get_area_entities(hass, area_id)
+        for entity_id in area_entities:
+            device_class = get_entity_device_class(hass, entity_id)
+            if device_class == "door":
+                door_sensors.append(entity_id)
+    
+    return door_sensors
+
 def get_room_identity(hass, room, is_duplicate):
     """
     Determine the unique slug and display name for a room.
