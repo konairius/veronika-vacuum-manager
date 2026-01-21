@@ -51,6 +51,49 @@ class VeronikaManager:
         # We will resolve IDs in async_setup
         pass
 
+    def register_entity(self, entity_type, slug, entity_id):
+        """Register an entity with the manager."""
+        # Find the cache entry with matching slug
+        target_key = None
+        for key, data in self._entity_cache.items():
+            if data['slug'] == slug:
+                target_key = key
+                break
+        
+        if not target_key:
+            _LOGGER.warning(f"Attempted to register {entity_type} for unknown room slug {slug}")
+            return
+
+        # Update cache
+        if entity_type == 'switch_clean':
+            self._entity_cache[target_key]['switch'] = entity_id
+            self._update_vacuum_segment_map(target_key)
+        elif entity_type == 'switch_disable':
+            self._entity_cache[target_key]['disable'] = entity_id
+        elif entity_type == 'binary_sensor':
+            self._entity_cache[target_key]['sensor'] = entity_id
+
+    def _update_vacuum_segment_map(self, cache_key):
+        """Update the vacuum segment map for a specific cache entry."""
+        data = self._entity_cache[cache_key]
+        vac = data['vacuum']
+        segments = data['segments']
+        switch_id = data['switch']
+        
+        if not switch_id:
+            return
+
+        if vac not in self._vacuum_segment_map:
+            self._vacuum_segment_map[vac] = {}
+        
+        for seg in segments:
+            if seg not in self._vacuum_segment_map[vac]:
+                self._vacuum_segment_map[vac][seg] = []
+            
+            # Add if not present
+            if switch_id not in self._vacuum_segment_map[vac][seg]:
+                self._vacuum_segment_map[vac][seg].append(switch_id)
+
     async def async_setup(self):
         # Build maps now that we can use async methods
         ent_reg = er.async_get(self.hass)
@@ -72,18 +115,18 @@ class VeronikaManager:
             if cache_key not in self._entity_cache:
                 unique_id = f"veronika_clean_{slug}"
                 switch_id = ent_reg.async_get_entity_id("switch", DOMAIN, unique_id)
-                if not switch_id:
-                    switch_id = f"switch.veronika_clean_{slug}"
+                # if not switch_id:
+                #    switch_id = f"switch.veronika_clean_{slug}"
                 
                 unique_id_disable = f"veronika_disable_{slug}"
                 disable_id = ent_reg.async_get_entity_id("switch", DOMAIN, unique_id_disable)
-                if not disable_id:
-                    disable_id = f"switch.veronika_disable_{slug}"
+                # if not disable_id:
+                #     disable_id = f"switch.veronika_disable_{slug}"
                 
                 unique_id_sensor = f"veronika_status_{slug}"
                 sensor_id = ent_reg.async_get_entity_id("binary_sensor", DOMAIN, unique_id_sensor)
-                if not sensor_id:
-                    sensor_id = f"binary_sensor.veronika_status_{slug}"
+                # if not sensor_id:
+                #     sensor_id = f"binary_sensor.veronika_status_{slug}"
                 
                 self._entity_cache[cache_key] = {
                     'switch': switch_id,
@@ -98,14 +141,8 @@ class VeronikaManager:
             
             # Build segment map using cached switch ID
             switch_id = self._entity_cache[cache_key]['switch']
-            
-            if vac not in self._vacuum_segment_map:
-                self._vacuum_segment_map[vac] = {}
-            
-            for seg in segments:
-                if seg not in self._vacuum_segment_map[vac]:
-                    self._vacuum_segment_map[vac][seg] = []
-                self._vacuum_segment_map[vac][seg].append(switch_id)
+            if switch_id:
+                self._update_vacuum_segment_map(cache_key)
 
         # Subscribe to vacuum state changes for monitoring segments
         vacuums = list(self._vacuum_segment_map.keys())

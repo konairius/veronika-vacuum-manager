@@ -34,6 +34,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
 class VeronikaSwitch(SwitchEntity, RestoreEntity):
     def __init__(self, room_name, room_slug, switch_type, icon):
         self._room_name = room_name
+        self._room_slug = room_slug
         self._type = switch_type
         self._attr_name = f"Veronika {switch_type.capitalize()} {room_name}"
         self._attr_unique_id = f"veronika_{switch_type}_{room_slug}"
@@ -54,6 +55,13 @@ class VeronikaSwitch(SwitchEntity, RestoreEntity):
 
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
+        
+        # Register with Manager
+        manager = self.hass.data.get(f"{DOMAIN}_manager")
+        if manager:
+            type_key = "switch_clean" if self._type == "clean" else "switch_disable"
+            manager.register_entity(type_key, self._room_slug, self.entity_id)
+            
         state = await self.async_get_last_state()
         if state:
             self._is_on = state.state == "on"

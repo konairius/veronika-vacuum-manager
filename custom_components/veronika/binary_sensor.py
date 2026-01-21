@@ -92,6 +92,11 @@ class VeronikaRoomSensor(BinarySensorEntity):
         # Resolve entity IDs from unique IDs
         ent_reg = er.async_get(self.hass)
         
+        # Register with Manager
+        manager = self.hass.data.get(f"{DOMAIN}_manager")
+        if manager:
+            manager.register_entity("binary_sensor", self._slug, self.entity_id)
+
         clean_unique_id = f"veronika_clean_{self._slug}"
         disable_unique_id = f"veronika_disable_{self._slug}"
         
