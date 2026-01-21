@@ -12,7 +12,7 @@ from homeassistant.const import (
 )
 from homeassistant.helpers.event import async_track_state_change_event
 
-from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_SEGMENTS, CONF_DEBUG, CONF_AREA
+from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_SEGMENTS, CONF_DEBUG, CONF_AREA, CONF_MIN_SEGMENT_DURATION
 from .utils import get_room_identity
 from collections import Counter
 
@@ -24,6 +24,7 @@ class VeronikaManager:
         self.config = config
         self.rooms = config[CONF_ROOMS]
         self.debug_mode = config.get(CONF_DEBUG, False)
+        self.min_segment_duration = config.get(CONF_MIN_SEGMENT_DURATION, 180)
         self._vacuum_monitors = {}
         
         # Map vacuum -> {segment_id: [switch_entity_id]}
@@ -99,7 +100,9 @@ class VeronikaManager:
              # Check if we have a pending segment
              if monitor["current_segment"] is not None:
                  duration = time.time() - monitor["start_time"]
-                 self._handle_segment_completion(entity_id, monitor["current_segment"], duration)
+                 self.hass.async_create_task(
+                     self._handle_segment_completion(entity_id, monitor["current_segment"], duration)
+                 )
              
              monitor["current_segment"] = None
              monitor["start_time"] = 0
@@ -110,35 +113,32 @@ class VeronikaManager:
             # Check if we need to complete the previous segment
             if monitor["current_segment"] is not None:
                 duration = time.time() - monitor["start_time"]
-                self._handle_segment_completion(entity_id, monitor["current_segment"], duration)
+                self.hass.async_create_task(
+                    self._handle_segment_completion(entity_id, monitor["current_segment"], duration)
+                )
             
             # Start tracking new segment
             monitor["current_segment"] = new_segment
             monitor["start_time"] = time.time()
 
-    def _handle_segment_completion(self, vacuum_id, segment_id, duration):
+    async def _handle_segment_completion(self, vacuum_id, segment_id, duration):
         _LOGGER.info(f"Vacuum {vacuum_id} finished segment {segment_id} in {duration}s")
         
-        if duration < 180:
-            _LOGGER.info("Segment duration too short (<180s), not resetting toggles.")
+        if duration < self.min_segment_duration:
+            _LOGGER.info(f"Segment duration too short (<{self.min_segment_duration}s), not resetting toggles.")
             return
 
         # Find switches to turn off
         if vacuum_id in self._vacuum_segment_map:
-            # segment_id might be int or string, ensure compatibility
-            try:
-                seg_int = int(segment_id)
-            except (ValueError, TypeError):
-                seg_int = segment_id
-
-            switches = self._vacuum_segment_map[vacuum_id].get(seg_int, [])
+            switches = self._vacuum_segment_map[vacuum_id].get(segment_id, [])
             for switch in switches:
                 _LOGGER.info(f"Resetting switch {switch}")
-                self.hass.async_create_task(
-                    self.hass.services.async_call(
+                try:
+                    await self.hass.services.async_call(
                         "switch", SERVICE_TURN_OFF, {ATTR_ENTITY_ID: switch}
                     )
-                )
+                except Exception as err:
+                    _LOGGER.error(f"Failed to reset switch {switch}: {err}")
 
     async def get_cleaning_plan(self, rooms_to_clean=None):
         """
@@ -298,9 +298,13 @@ class VeronikaManager:
         domain = service_call[0]
         service = service_call[1]
         
-        await self.hass.services.async_call(
-            domain, service, payload["data"]
-        )
+        try:
+            await self.hass.services.async_call(
+                domain, service, payload["data"]
+            )
+            _LOGGER.info(f"Successfully sent command to {vacuum_entity} for segments {segments}")
+        except Exception as err:
+            _LOGGER.error(f"Failed to send command to {vacuum_entity}: {err}")
 
     async def reset_all_toggles(self):
         ent_reg = er.async_get(self.hass)

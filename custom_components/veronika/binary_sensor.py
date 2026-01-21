@@ -184,7 +184,7 @@ class VeronikaRoomSensor(BinarySensorEntity):
         is_occupied = False
         for sens in self._occupancy:
             st = self.hass.states.get(sens)
-            if st and st.state == STATE_ON:
+            if st and st.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN) and st.state == STATE_ON:
                 is_occupied = True
                 break
         

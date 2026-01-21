@@ -7,5 +7,6 @@ CONF_AREA = "area"
 # CONF_NAME = "name"
 CONF_DEBUG = "debug"
 CONF_OCCUPANCY_COOLDOWN = "occupancy_cooldown"
+CONF_MIN_SEGMENT_DURATION = "min_segment_duration"
 
 EVENT_VERONIKA_CLEANING_FINISHED = "veronika_cleaning_finished"

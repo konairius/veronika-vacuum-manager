@@ -46,7 +46,6 @@ class VeronikaPlanSensor(Entity):
             
             # Switch
             unique_id_switch = f"veronika_clean_{slug}"
-            unique_id_switch = f"veronika_clean_{slug}"
             switch_id = ent_reg.async_get_entity_id("switch", DOMAIN, unique_id_switch)
             if not switch_id:
                 switch_id = f"switch.veronika_clean_{slug}"
