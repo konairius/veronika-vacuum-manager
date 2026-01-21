@@ -6,7 +6,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.discovery import async_load_platform
 from homeassistant.helpers import area_registry as ar, entity_registry as er
 
-from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_SEGMENTS, CONF_AREA, CONF_DEBUG, CONF_OCCUPANCY_COOLDOWN, CONF_MIN_SEGMENT_DURATION, CONF_SEGMENT_ATTRIBUTE
+from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_SEGMENTS, CONF_AREA, CONF_DEBUG, CONF_OCCUPANCY_COOLDOWN, CONF_MIN_SEGMENT_DURATION, CONF_SEGMENT_ATTRIBUTE, CONF_SENSOR_PLATFORM
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -16,6 +16,7 @@ ROOM_SCHEMA = vol.Schema({
     vol.Optional(CONF_SEGMENTS, default=[]): vol.All(cv.ensure_list, [int]),
     vol.Optional(CONF_OCCUPANCY_COOLDOWN): cv.positive_int,
     vol.Optional(CONF_SEGMENT_ATTRIBUTE): cv.string,
+    vol.Optional(CONF_SENSOR_PLATFORM): cv.string,
 })
 
 CONFIG_SCHEMA = vol.Schema({
@@ -25,6 +26,7 @@ CONFIG_SCHEMA = vol.Schema({
         vol.Optional(CONF_OCCUPANCY_COOLDOWN, default=0): cv.positive_int,
         vol.Optional(CONF_MIN_SEGMENT_DURATION, default=180): cv.positive_int,
         vol.Optional(CONF_SEGMENT_ATTRIBUTE, default="current_segment"): cv.string,
+        vol.Optional(CONF_SENSOR_PLATFORM, default=None): vol.Any(cv.string, None),
     }),
 }, extra=vol.ALLOW_EXTRA)
 

@@ -40,7 +40,7 @@ def get_entity_device_class(hass, entity_id):
     
     return None
 
-def discover_occupancy_sensors(hass, area_id, platform_filter="magic_areas"):
+def discover_occupancy_sensors(hass, area_id, platform_filter=None):
     """Discover occupancy sensors in an area.
     
     Args:

@@ -7,7 +7,7 @@ from homeassistant.util import slugify, dt as dt_util
 from homeassistant.const import STATE_ON, STATE_OFF, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.helpers.event import async_call_later
 
-from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_AREA, CONF_SEGMENTS, CONF_OCCUPANCY_COOLDOWN
+from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_AREA, CONF_SEGMENTS, CONF_OCCUPANCY_COOLDOWN, CONF_SENSOR_PLATFORM
 from .utils import get_room_identity, discover_occupancy_sensors, discover_door_sensors
 from collections import Counter
 
@@ -20,6 +20,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
     global_config = hass.data[DOMAIN]
     rooms = global_config[CONF_ROOMS]
     global_cooldown = global_config.get(CONF_OCCUPANCY_COOLDOWN, 0)
+    global_sensor_platform = global_config.get(CONF_SENSOR_PLATFORM)
     
     # Pre-calculate doors per vacuum to avoid repeated lookups
     vacuum_areas = {}
@@ -36,12 +37,12 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
     
     for room in rooms:
         is_duplicate = area_counts[room[CONF_AREA]] > 1
-        entities.append(VeronikaRoomSensor(hass, room, vacuum_areas, is_duplicate, global_cooldown))
+        entities.append(VeronikaRoomSensor(hass, room, vacuum_areas, is_duplicate, global_cooldown, global_sensor_platform))
 
     async_add_entities(entities)
 
 class VeronikaRoomSensor(BinarySensorEntity):
-    def __init__(self, hass, config, vacuum_areas, is_duplicate, global_cooldown):
+    def __init__(self, hass, config, vacuum_areas, is_duplicate, global_cooldown, global_sensor_platform):
         self.hass = hass
         self._config = config
         self._vacuum = config[CONF_VACUUM]
@@ -51,6 +52,8 @@ class VeronikaRoomSensor(BinarySensorEntity):
         
         # Cooldown logic
         self._cooldown = config.get(CONF_OCCUPANCY_COOLDOWN, global_cooldown)
+        self._sensor_platform = config.get(CONF_SENSOR_PLATFORM, global_sensor_platform)
+
         self._last_occupancy_time = None
         self._cooldown_timer = None
         
@@ -123,7 +126,7 @@ class VeronikaRoomSensor(BinarySensorEntity):
     async def _discover_sensors(self):
         """Discover occupancy and door sensors for this room."""
         # Discover occupancy sensors in the room's area
-        self._occupancy = discover_occupancy_sensors(self.hass, self._area, platform_filter="magic_areas")
+        self._occupancy = discover_occupancy_sensors(self.hass, self._area, platform_filter=self._sensor_platform)
         
         # Discover door sensors in all areas the vacuum can access
         self._doors = discover_door_sensors(self.hass, list(self._vacuum_areas))
