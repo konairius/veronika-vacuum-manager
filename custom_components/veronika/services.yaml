@@ -8,11 +8,14 @@ clean_all_enabled:
 
 clean_specific_room:
   name: Clean Specific Room
-  description: Force clean a specific room.
+  description: Force clean a specific room by area ID.
   fields:
-    room_sensor:
-      description: Entity ID of the room status sensor (e.g. binary_sensor.veronika_status_kitchen)
-      example: binary_sensor.veronika_status_kitchen
+    area:
+      description: Area ID of the room to clean (e.g. kitchen, living_room)
+      example: kitchen
+      required: true
+      selector:
+        text:
 
 stop_cleaning:
   name: Stop Cleaning
