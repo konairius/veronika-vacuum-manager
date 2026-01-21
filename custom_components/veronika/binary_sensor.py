@@ -138,17 +138,30 @@ class VeronikaRoomSensor(BinarySensorEntity):
         # Subscribe to state changes
         try:
             entities_to_track = [self._clean_switch, self._disable_switch, self._vacuum] + self._doors + self._occupancy
-            self.async_on_remove(
-                async_track_state_change_event(
-                    self.hass, 
-                    entities_to_track,
-                    self._on_state_change
+            # Filter out None values in case some entities haven't been resolved
+            entities_to_track = [e for e in entities_to_track if e is not None]
+            if entities_to_track:
+                self.async_on_remove(
+                    async_track_state_change_event(
+                        self.hass, 
+                        entities_to_track,
+                        self._on_state_change
+                    )
                 )
-            )
+            else:
+                _LOGGER.warning(f"No entities to track for {self._name}")
         except Exception as err:
             _LOGGER.error(f"Failed to set up state tracking for {self._name}: {err}")
         
-        self._update_state()
+        # Perform initial state update
+        try:
+            self._update_state()
+        except Exception as err:
+            _LOGGER.error(f"Failed initial state update for {self._name}: {err}")
+            # Set a default state so it's not stuck initializing
+            self._status_reason = "Error during initialization"
+            self._is_on = False
+            self.async_write_ha_state()
 
     async def async_will_remove_from_hass(self) -> None:
         """Cleanup when entity is removed."""
@@ -281,3 +294,8 @@ class VeronikaRoomSensor(BinarySensorEntity):
             except Exception as err:
                 _LOGGER.warning(f"Error processing door sensor {door}: {err}")
                 continue
+
+        # If we reach here, all checks passed - room is ready
+        self._status_reason = "Ready"
+        self._is_on = True
+        self.async_write_ha_state()
