@@ -4,6 +4,7 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.discovery import async_load_platform
+from homeassistant.helpers import area_registry as ar, entity_registry as er
 
 from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_SEGMENTS, CONF_AREA, CONF_DEBUG, CONF_OCCUPANCY_COOLDOWN, CONF_MIN_SEGMENT_DURATION
 
@@ -25,12 +26,60 @@ CONFIG_SCHEMA = vol.Schema({
     }),
 }, extra=vol.ALLOW_EXTRA)
 
+async def _validate_configuration(hass: HomeAssistant, config: dict) -> list[str]:
+    """Validate configuration and return list of errors."""
+    errors = []
+    area_reg = ar.async_get(hass)
+    rooms = config[CONF_ROOMS]
+    
+    for idx, room in enumerate(rooms):
+        room_desc = f"Room {idx + 1} ({room.get(CONF_AREA, 'unknown')})"
+        
+        # Validate vacuum entity exists
+        vacuum_entity = room[CONF_VACUUM]
+        vacuum_state = hass.states.get(vacuum_entity)
+        if not vacuum_state:
+            errors.append(f"{room_desc}: Vacuum entity '{vacuum_entity}' does not exist")
+        elif not vacuum_entity.startswith('vacuum.'):
+            errors.append(f"{room_desc}: Entity '{vacuum_entity}' is not a vacuum entity")
+        
+        # Validate area exists
+        area_id = room[CONF_AREA]
+        area = area_reg.async_get_area(area_id)
+        if not area:
+            # Try to find area by name
+            area = area_reg.async_get_area_by_name(area_id)
+            if not area:
+                errors.append(f"{room_desc}: Area '{area_id}' does not exist")
+        
+        # Validate segments
+        segments = room.get(CONF_SEGMENTS, [])
+        if segments is not None and len(segments) == 0 and vacuum_state:
+            # Empty segments is allowed but warn if it seems unintentional
+            _LOGGER.warning(f"{room_desc}: No segments configured - room will not be cleaned")
+        
+        # Validate cooldown if specified
+        cooldown = room.get(CONF_OCCUPANCY_COOLDOWN)
+        if cooldown is not None and cooldown < 0:
+            errors.append(f"{room_desc}: Occupancy cooldown cannot be negative")
+    
+    return errors
+
 async def async_setup(hass: HomeAssistant, config: dict):
     """Set up the Veronika component."""
     if DOMAIN not in config:
         return True
 
     conf = config[DOMAIN]
+    
+    # Validate configuration
+    validation_errors = await _validate_configuration(hass, conf)
+    if validation_errors:
+        for error in validation_errors:
+            _LOGGER.error(f"Configuration validation error: {error}")
+        _LOGGER.error("Veronika integration setup aborted due to configuration errors")
+        return False
+    
     hass.data[DOMAIN] = conf
 
     # Initialize Manager
