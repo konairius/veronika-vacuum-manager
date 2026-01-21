@@ -12,7 +12,7 @@ from homeassistant.const import (
 )
 from homeassistant.helpers.event import async_track_state_change_event
 
-from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_SEGMENTS, CONF_DEBUG, CONF_AREA, CONF_MIN_SEGMENT_DURATION
+from .const import DOMAIN, CONF_ROOMS, CONF_VACUUM, CONF_SEGMENTS, CONF_DEBUG, CONF_AREA, CONF_MIN_SEGMENT_DURATION, CONF_SEGMENT_ATTRIBUTE
 from .utils import get_room_identity
 from collections import Counter
 
@@ -27,6 +27,15 @@ class VeronikaManager:
         self.min_segment_duration = config.get(CONF_MIN_SEGMENT_DURATION, 180)
         self._vacuum_monitors = {}
         self._unsubscribers = []  # Track listeners for cleanup
+        
+        # Map vacuum -> segment_attribute_name for different integrations
+        self._vacuum_segment_attributes = {}
+        global_segment_attr = config.get(CONF_SEGMENT_ATTRIBUTE, "current_segment")
+        for room in self.rooms:
+            vac = room[CONF_VACUUM]
+            if vac not in self._vacuum_segment_attributes:
+                # Per-room override or global default
+                self._vacuum_segment_attributes[vac] = room.get(CONF_SEGMENT_ATTRIBUTE, global_segment_attr)
         
         # Map vacuum -> {segment_id: [switch_entity_id]}
         self._vacuum_segment_map = {}
@@ -122,11 +131,9 @@ class VeronikaManager:
         
         monitor = self._vacuum_monitors[entity_id]
         
-        # Get current segment from attributes
-        # Note: Attribute name depends on integration. 
-        # Roborock/Dreame usually use 'current_segment' or similar.
-        # The script used: state_attr(local_vacuum_entity, 'current_segment')
-        new_segment = new_state.attributes.get("current_segment")
+        # Get current segment from attributes using configured attribute name
+        segment_attr = self._vacuum_segment_attributes.get(entity_id, "current_segment")
+        new_segment = new_state.attributes.get(segment_attr)
         
         # If vacuum is not cleaning/returning, reset monitor
         if new_state.state not in ["cleaning", "returning"]:
@@ -348,6 +355,7 @@ class VeronikaManager:
         # Clear caches and monitors
         self._vacuum_monitors.clear()
         self._vacuum_segment_map.clear()
+        self._vacuum_segment_attributes.clear()
         self._entity_cache.clear()
         
         _LOGGER.info("Veronika manager unloaded successfully")
