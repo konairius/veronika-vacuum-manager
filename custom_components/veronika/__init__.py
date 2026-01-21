@@ -80,3 +80,28 @@ async def async_setup(hass: HomeAssistant, config: dict):
     hass.services.async_register(DOMAIN, "stop_cleaning", handle_stop_cleaning)
 
     return True
+
+async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
+    """Unload Veronika integration."""
+    # Unload platforms
+    unload_ok = await hass.config_entries.async_unload_platforms(
+        entry, ["binary_sensor", "switch", "sensor"]
+    )
+    
+    if unload_ok:
+        # Cleanup manager
+        manager = hass.data.get(f"{DOMAIN}_manager")
+        if manager:
+            await manager.async_unload()
+        
+        # Remove services
+        hass.services.async_remove(DOMAIN, "reset_all_toggles")
+        hass.services.async_remove(DOMAIN, "clean_all_enabled")
+        hass.services.async_remove(DOMAIN, "clean_specific_room")
+        hass.services.async_remove(DOMAIN, "stop_cleaning")
+        
+        # Clear stored data
+        hass.data.pop(DOMAIN, None)
+        hass.data.pop(f"{DOMAIN}_manager", None)
+    
+    return unload_ok

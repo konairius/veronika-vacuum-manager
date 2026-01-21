@@ -26,6 +26,7 @@ class VeronikaManager:
         self.debug_mode = config.get(CONF_DEBUG, False)
         self.min_segment_duration = config.get(CONF_MIN_SEGMENT_DURATION, 180)
         self._vacuum_monitors = {}
+        self._unsubscribers = []  # Track listeners for cleanup
         
         # Map vacuum -> {segment_id: [switch_entity_id]}
         self._vacuum_segment_map = {}
@@ -69,7 +70,9 @@ class VeronikaManager:
 
         # Subscribe to vacuum state changes for monitoring segments
         vacuums = list(self._vacuum_segment_map.keys())
-        async_track_state_change_event(self.hass, vacuums, self._on_vacuum_state_change)
+        if vacuums:
+            unsub = async_track_state_change_event(self.hass, vacuums, self._on_vacuum_state_change)
+            self._unsubscribers.append(unsub)
 
     @callback
     def _on_vacuum_state_change(self, event):
@@ -333,4 +336,17 @@ class VeronikaManager:
                     "vacuum", "return_to_base",
                     {ATTR_ENTITY_ID: vac}
                 )
+
+    async def async_unload(self):
+        """Cleanup when unloading the integration."""
+        # Unsubscribe from all state change listeners
+        for unsub in self._unsubscribers:
+            unsub()
+        self._unsubscribers.clear()
+        
+        # Clear monitors
+        self._vacuum_monitors.clear()
+        self._vacuum_segment_map.clear()
+        
+        _LOGGER.info("Veronika manager unloaded successfully")
 

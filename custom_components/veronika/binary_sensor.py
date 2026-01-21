@@ -113,6 +113,13 @@ class VeronikaRoomSensor(BinarySensorEntity):
         )
         self._update_state()
 
+    async def async_will_remove_from_hass(self):
+        """Cleanup when entity is removed."""
+        # Cancel any pending cooldown timer
+        if self._cooldown_timer:
+            self._cooldown_timer()
+            self._cooldown_timer = None
+
     async def _discover_sensors(self):
         # 1. Occupancy
         # Use robust discovery logic similar to HA core templates
