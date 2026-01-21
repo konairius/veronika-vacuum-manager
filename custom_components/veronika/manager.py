@@ -157,6 +157,18 @@ class VeronikaManager:
         # Subscribe to vacuum state changes for monitoring segments
         vacuums = list(self._vacuum_segment_map.keys())
         if vacuums:
+            # Validate vacuums exist before subscribing
+            missing_vacuums = []
+            for vac in vacuums:
+                if not self.hass.states.get(vac):
+                    missing_vacuums.append(vac)
+            
+            if missing_vacuums:
+                _LOGGER.warning(
+                    f"The following vacuum entities are not available yet: {', '.join(missing_vacuums)}. "
+                    "Veronika will start monitoring them when they become available."
+                )
+            
             unsub = async_track_state_change_event(self.hass, vacuums, self._on_vacuum_state_change)
             self._unsubscribers.append(unsub)
 
@@ -401,8 +413,13 @@ class VeronikaManager:
                     continue
                 
                 # Validate vacuum exists
-                if not self.hass.states.get(vac):
-                    _LOGGER.error(f"Vacuum entity {vac} not found")
+                vacuum_state = self.hass.states.get(vac)
+                if not vacuum_state:
+                    error_msg = (
+                        f"Vacuum entity {vac} not found. "
+                        f"Please ensure your vacuum integration is loaded and the entity exists."
+                    )
+                    _LOGGER.error(error_msg)
                     failed_vacuums.append(vac)
                     continue
                 

@@ -32,7 +32,11 @@ CONFIG_SCHEMA = vol.Schema({
 }, extra=vol.ALLOW_EXTRA)
 
 async def _validate_configuration(hass: HomeAssistant, config: Dict[str, Any]) -> List[str]:
-    """Validate configuration and return list of errors."""
+    """Validate configuration and return list of errors.
+    
+    Note: Entity existence checks are warnings only, as entities may not be loaded yet.
+    Runtime errors will catch actual missing entities.
+    """
     errors: List[str] = []
     area_reg: ar.AreaRegistry = ar.async_get(hass)
     rooms: List[Dict[str, Any]] = config[CONF_ROOMS]
@@ -40,26 +44,32 @@ async def _validate_configuration(hass: HomeAssistant, config: Dict[str, Any]) -
     for idx, room in enumerate(rooms):
         room_desc = f"Room {idx + 1} ({room.get(CONF_AREA, 'unknown')})"
         
-        # Validate vacuum entity exists
+        # Validate vacuum entity format (but don't require it to exist yet)
         vacuum_entity = room[CONF_VACUUM]
+        if not vacuum_entity.startswith('vacuum.'):
+            errors.append(f"{room_desc}: Entity '{vacuum_entity}' is not a vacuum entity (must start with 'vacuum.')")
+        
+        # Check if entity exists, but only warn if missing (may not be loaded yet)
         vacuum_state = hass.states.get(vacuum_entity)
         if not vacuum_state:
-            errors.append(f"{room_desc}: Vacuum entity '{vacuum_entity}' does not exist")
-        elif not vacuum_entity.startswith('vacuum.'):
-            errors.append(f"{room_desc}: Entity '{vacuum_entity}' is not a vacuum entity")
+            _LOGGER.warning(
+                f"{room_desc}: Vacuum entity '{vacuum_entity}' not found yet. "
+                "This is normal if the vacuum integration loads after Veronika. "
+                "If the entity never appears, check your vacuum integration."
+            )
         
-        # Validate area exists
+        # Validate area exists (this is critical as areas should be available)
         area_id = room[CONF_AREA]
         area = area_reg.async_get_area(area_id)
         if not area:
             # Try to find area by name
             area = area_reg.async_get_area_by_name(area_id)
             if not area:
-                errors.append(f"{room_desc}: Area '{area_id}' does not exist")
+                errors.append(f"{room_desc}: Area '{area_id}' does not exist. Please create it in Home Assistant.")
         
         # Validate segments
         segments = room.get(CONF_SEGMENTS, [])
-        if segments is not None and len(segments) == 0 and vacuum_state:
+        if segments is not None and len(segments) == 0:
             # Empty segments is allowed but warn if it seems unintentional
             _LOGGER.warning(f"{room_desc}: No segments configured - room will not be cleaned")
         
