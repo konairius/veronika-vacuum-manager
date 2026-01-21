@@ -64,31 +64,11 @@ async def async_setup(hass: HomeAssistant, config: dict):
         await manager.start_cleaning()
 
     async def handle_clean_room(call):
-        room_name = call.data.get("room_name")
-        # Or maybe accept entity_id of the sensor?
-        # The frontend sends "room_sensor" entity_id.
-        # Let's support both or just map it.
-        # If we get entity_id "binary_sensor.veronika_status_kitchen", we can derive the name or just pass it to manager.
-        # But manager expects room names for start_cleaning.
-        
-        # Let's make manager smarter or handle it here.
-        # If we get "room_sensor", we can find the room config.
-        sensor_id = call.data.get("room_sensor")
-        target_room_name = None
-        
-        if sensor_id:
-            # Find room with this sensor id
-            from homeassistant.util import slugify
-            for room in conf[CONF_ROOMS]:
-                slug = slugify(room[CONF_NAME])
-                if f"binary_sensor.veronika_status_{slug}" == sensor_id:
-                    target_room_name = room[CONF_NAME]
-                    break
-        
-        if target_room_name:
-            await manager.start_cleaning([target_room_name])
+        area = call.data.get("area")
+        if area:
+            await manager.start_cleaning([area])
         else:
-            _LOGGER.warning(f"Could not find room for sensor {sensor_id}")
+            _LOGGER.warning("No area specified for clean_specific_room service")
 
     async def handle_stop_cleaning(call):
         await manager.stop_cleaning()

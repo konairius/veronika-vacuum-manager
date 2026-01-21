@@ -240,5 +240,27 @@ class TestVeronikaManager(unittest.IsolatedAsyncioTestCase):
             "switch", "turn_off", {"entity_id": "switch.veronika_clean_living_room"}
         )
 
+    async def test_get_cleaning_plan_structure(self):
+        """Test that get_cleaning_plan returns the correct structure including sensor_entity_id."""
+        # Setup Entity Registry
+        def get_entity_id_side_effect(domain, platform, unique_id):
+            if "clean" in unique_id: return "switch.veronika_clean_living_room"
+            if "disable" in unique_id: return "switch.veronika_disable_living_room"
+            if "status" in unique_id: return "binary_sensor.veronika_status_living_room"
+            return None
+        self.er_instance.async_get_entity_id.side_effect = get_entity_id_side_effect
+
+        # Setup States
+        self.hass.states.get.return_value = MagicMock(state="on", attributes={})
+
+        manager = VeronikaManager(self.hass, self.config)
+        plan = await manager.get_cleaning_plan()
+        
+        # Verify
+        self.assertIn("vacuum.robot", plan)
+        room_data = plan["vacuum.robot"]["rooms"][0]
+        self.assertIn("sensor_entity_id", room_data)
+        self.assertEqual(room_data["sensor_entity_id"], "binary_sensor.veronika_status_living_room")
+
 if __name__ == "__main__":
     unittest.main()
