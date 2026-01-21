@@ -1,9 +1,10 @@
 import logging
 import asyncio
 import time
-from typing import Any, Dict, List, Optional, Set, Callable
+from typing import Any, Dict, List, Optional, Set, Callable, Tuple
 from homeassistant.core import HomeAssistant, callback, Event
 from homeassistant.helpers import device_registry as dr, entity_registry as er, area_registry as ar
+from homeassistant.util import dt as dt_util
 from homeassistant.const import (
     STATE_UNAVAILABLE, 
     STATE_UNKNOWN, 
@@ -28,7 +29,7 @@ class VeronikaManager:
         self.rooms: List[Dict[str, Any]] = config[CONF_ROOMS]
         self.debug_mode: bool = config.get(CONF_DEBUG, False)
         self.min_segment_duration: int = config.get(CONF_MIN_SEGMENT_DURATION, 180)
-        self._vacuum_monitors: Dict[str, Dict[str, Any]] = {}
+        self._vacuum_monitors: Dict[str, Dict[str, Any]] = {}  # Structure: {vacuum_id: {current_segment, start_time, completion_task}}
         self._unsubscribers: List[Callable[[], None]] = []  # Track listeners for cleanup
         
         # Map vacuum -> segment_attribute_name for different integrations
@@ -44,8 +45,8 @@ class VeronikaManager:
         self._vacuum_segment_map: Dict[str, Dict[int, List[str]]] = {}
         
         # Cache for entity IDs to avoid repeated registry lookups
-        # Structure: {cache_key: {'switch': id, 'disable': id, 'sensor': id, 'slug': slug, 'name': name, ...}}
-        self._entity_cache: Dict[str, Dict[str, Any]] = {}
+        # Structure: {(area_id, vacuum, segments_tuple): {'switch': id, 'disable': id, 'sensor': id, ...}}
+        self._entity_cache: Dict[Tuple[str, str, Tuple[int, ...]], Dict[str, Any]] = {}
         
         # Error tracking
         self._last_error: Optional[str] = None
@@ -61,7 +62,7 @@ class VeronikaManager:
     def register_entity(self, entity_type: str, slug: str, entity_id: str) -> None:
         """Register an entity with the manager."""
         # Find the cache entry with matching slug
-        target_key = None
+        target_key: Optional[Tuple[str, str, Tuple[int, ...]]] = None
         for key, data in self._entity_cache.items():
             if data['slug'] == slug:
                 target_key = key
@@ -80,7 +81,7 @@ class VeronikaManager:
         elif entity_type == 'binary_sensor':
             self._entity_cache[target_key]['sensor'] = entity_id
 
-    def _update_vacuum_segment_map(self, cache_key: str) -> None:
+    def _update_vacuum_segment_map(self, cache_key: Tuple[str, str, Tuple[int, ...]]) -> None:
         """Update the vacuum segment map for a specific cache entry."""
         data: Dict[str, Any] = self._entity_cache[cache_key]
         vac: str = data['vacuum']
@@ -109,15 +110,17 @@ class VeronikaManager:
         area_counts: Counter = Counter(r[CONF_AREA] for r in self.rooms)
         
         for room in self.rooms:
-            vac = room[CONF_VACUUM]
-            segments = room.get(CONF_SEGMENTS, [])
-            area_id = room[CONF_AREA]
+            vac: str = room[CONF_VACUUM]
+            segments: List[int] = room.get(CONF_SEGMENTS, [])
+            area_id: str = room[CONF_AREA]
             
-            is_duplicate = area_counts[area_id] > 1
+            is_duplicate: bool = area_counts[area_id] > 1
             slug, display_name = get_room_identity(self.hass, room, is_duplicate)
             
-            # Build entity cache for this room
-            cache_key = f"{area_id}_{vac}_{'-'.join(map(str, segments))}"
+            # Build entity cache for this room using tuple key to avoid collisions
+            # Tuple format: (area_id, vacuum, sorted_segments_tuple)
+            segments_tuple: Tuple[int, ...] = tuple(sorted(segments))
+            cache_key: Tuple[str, str, Tuple[int, ...]] = (area_id, vac, segments_tuple)
             
             if cache_key not in self._entity_cache:
                 unique_id = f"veronika_clean_{slug}"
@@ -163,14 +166,15 @@ class VeronikaManager:
         new_state = event.data.get("new_state")
         old_state = event.data.get("old_state")
         
-        if not new_state:
+        if not new_state or not entity_id:
             return
 
         # Initialize monitor state if not exists
         if entity_id not in self._vacuum_monitors:
             self._vacuum_monitors[entity_id] = {
                 "current_segment": None,
-                "start_time": 0
+                "start_time": None,
+                "completion_task": None
             }
         
         monitor = self._vacuum_monitors[entity_id]
@@ -181,29 +185,39 @@ class VeronikaManager:
         
         # If vacuum is not cleaning/returning, reset monitor
         if new_state.state not in ["cleaning", "returning"]:
-             # Check if we have a pending segment
-             if monitor["current_segment"] is not None:
-                 duration = time.time() - monitor["start_time"]
-                 self.hass.async_create_task(
-                     self._handle_segment_completion(entity_id, monitor["current_segment"], duration)
-                 )
-             
-             monitor["current_segment"] = None
-             monitor["start_time"] = 0
-             return
+            # Check if we have a pending segment
+            if monitor["current_segment"] is not None and monitor["start_time"] is not None:
+                duration = dt_util.now().timestamp() - monitor["start_time"]
+                
+                # Cancel any pending completion task to avoid duplicate processing
+                if monitor["completion_task"] and not monitor["completion_task"].done():
+                    monitor["completion_task"].cancel()
+                
+                monitor["completion_task"] = self.hass.async_create_task(
+                    self._handle_segment_completion(entity_id, monitor["current_segment"], duration)
+                )
+            
+            monitor["current_segment"] = None
+            monitor["start_time"] = None
+            return
 
         # If segment changed
         if new_segment != monitor["current_segment"]:
             # Check if we need to complete the previous segment
-            if monitor["current_segment"] is not None:
-                duration = time.time() - monitor["start_time"]
-                self.hass.async_create_task(
+            if monitor["current_segment"] is not None and monitor["start_time"] is not None:
+                duration = dt_util.now().timestamp() - monitor["start_time"]
+                
+                # Cancel any pending completion task to avoid race conditions
+                if monitor["completion_task"] and not monitor["completion_task"].done():
+                    monitor["completion_task"].cancel()
+                
+                monitor["completion_task"] = self.hass.async_create_task(
                     self._handle_segment_completion(entity_id, monitor["current_segment"], duration)
                 )
             
             # Start tracking new segment
             monitor["current_segment"] = new_segment
-            monitor["start_time"] = time.time()
+            monitor["start_time"] = dt_util.now().timestamp()
 
     async def _handle_segment_completion(self, vacuum_id: str, segment_id: int, duration: float) -> None:
         _LOGGER.info(f"Vacuum {vacuum_id} finished segment {segment_id} in {duration}s")
@@ -566,6 +580,11 @@ class VeronikaManager:
 
     async def async_unload(self) -> None:
         """Cleanup when unloading the integration."""
+        # Cancel any pending completion tasks
+        for monitor in self._vacuum_monitors.values():
+            if monitor.get("completion_task") and not monitor["completion_task"].done():
+                monitor["completion_task"].cancel()
+        
         # Unsubscribe from all state change listeners
         for unsub in self._unsubscribers:
             unsub()
