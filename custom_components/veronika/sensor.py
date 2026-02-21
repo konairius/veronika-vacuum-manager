@@ -1,6 +1,6 @@
 import logging
 from typing import Any, Dict, List, Optional, Set
-from homeassistant.helpers.entity import Entity
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.core import HomeAssistant, callback, Event
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers import entity_registry as er
@@ -22,10 +22,13 @@ async def async_setup_platform(
     if discovery_info is None:
         return
 
-    manager = hass.data[f"{DOMAIN}_manager"]
+    manager = hass.data.get(f"{DOMAIN}_manager")
+    if not manager:
+        _LOGGER.error("Veronika manager not initialized, skipping sensor platform setup")
+        return
     async_add_entities([VeronikaPlanSensor(hass, manager)], True)
 
-class VeronikaPlanSensor(Entity):
+class VeronikaPlanSensor(SensorEntity):
     """Representation of a Veronika Cleaning Plan Sensor."""
 
     def __init__(self, hass: HomeAssistant, manager: Any) -> None:
@@ -44,10 +47,7 @@ class VeronikaPlanSensor(Entity):
         # Build watch list from manager's entity cache (only once)
         if self._entities_to_watch is None:
             self._entities_to_watch = set()
-            for cache_data in self._manager._entity_cache.values():
-                self._entities_to_watch.add(cache_data['switch'])
-                self._entities_to_watch.add(cache_data['disable'])
-                self._entities_to_watch.add(cache_data['sensor'])
+            self._entities_to_watch = self._manager.get_entity_watch_list()
 
         self.async_on_remove(
             async_track_state_change_event(
@@ -89,8 +89,8 @@ class VeronikaPlanSensor(Entity):
         self._attributes = {
             "plan": vacuums_data,
             "total_cleaning": total_cleaning,
-            "last_error": self._manager._last_error,
-            "error_count": self._manager._error_count
+            "last_error": self._manager.last_error,
+            "error_count": self._manager.error_count
         }
 
     @property

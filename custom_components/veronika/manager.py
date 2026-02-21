@@ -51,7 +51,13 @@ class VeronikaManager:
         # Error tracking
         self._last_error: Optional[str] = None
         self._error_count: int = 0
-        
+
+        # Concurrency guard for start_cleaning
+        self._cleaning_lock: asyncio.Lock = asyncio.Lock()
+
+        # Unload flag to prevent orphaned operations
+        self._is_unloading: bool = False
+
         self._build_maps()
 
     def _build_maps(self) -> None:
@@ -232,6 +238,8 @@ class VeronikaManager:
             monitor["start_time"] = dt_util.now().timestamp()
 
     async def _handle_segment_completion(self, vacuum_id: str, segment_id: int, duration: float) -> None:
+        if self._is_unloading:
+            return
         _LOGGER.info(f"Vacuum {vacuum_id} finished segment {segment_id} in {duration}s")
         
         if duration < self.min_segment_duration:
@@ -277,17 +285,18 @@ class VeronikaManager:
         if failed_switches:
             await self._notify_error(
                 f"Failed to reset {len(failed_switches)} switch(es) after cleaning segment {segment_id}",
-                f"Switches: {', '.join(failed_switches)}"
+                f"Switches: {', '.join(failed_switches)}",
+                error_type="switch_reset"
             )
 
-    async def _notify_error(self, title: str, message: str) -> None:
+    async def _notify_error(self, title: str, message: str, error_type: str = "general") -> None:
         """Create a persistent notification for errors."""
         try:
             await async_create_notification(
                 self.hass,
                 message=message,
                 title=f"Veronika: {title}",
-                notification_id=f"veronika_error_{int(time.time())}"
+                notification_id=f"veronika_error_{error_type}"
             )
         except Exception as err:
             _LOGGER.error(f"Failed to create error notification: {err}")
@@ -385,7 +394,7 @@ class VeronikaManager:
         
         # Deduplicate segments and add debug command
         for vac in plan:
-            plan[vac]['segments'] = list(set(plan[vac]['segments']))
+            plan[vac]['segments'] = sorted(set(plan[vac]['segments']))
             if self.debug_mode:
                 plan[vac]['debug_command'] = await self._get_vacuum_command_payload(vac, plan[vac]['segments'])
             
@@ -396,6 +405,11 @@ class VeronikaManager:
         Start cleaning for specific rooms or all enabled rooms.
         rooms_to_clean: list of room names (optional)
         """
+        async with self._cleaning_lock:
+            await self._start_cleaning_inner(rooms_to_clean)
+
+    async def _start_cleaning_inner(self, rooms_to_clean: Optional[List[str]] = None) -> None:
+        """Inner implementation of start_cleaning, called under lock."""
         try:
             # 1. Identify what to clean
             plan: Dict[str, Dict[str, Any]] = await self.get_cleaning_plan(rooms_to_clean)
@@ -434,13 +448,14 @@ class VeronikaManager:
             if failed_vacuums:
                 await self._notify_error(
                     "Cleaning Start Failed",
-                    f"Failed to start cleaning for: {', '.join(failed_vacuums)}"
+                    f"Failed to start cleaning for: {', '.join(failed_vacuums)}",
+                    error_type="cleaning_start"
                 )
         except Exception as err:
             _LOGGER.error(f"Unexpected error in start_cleaning: {err}", exc_info=True)
             self._last_error = str(err)
             self._error_count += 1
-            await self._notify_error("Cleaning Error", f"Unexpected error: {str(err)}")
+            await self._notify_error("Cleaning Error", f"Unexpected error: {str(err)}", error_type="cleaning_error")
             raise HomeAssistantError(f"Failed to start cleaning: {err}") from err
 
     async def _get_vacuum_command_payload(self, vacuum_entity: str, segments: List[int]) -> Dict[str, Any]:
@@ -477,7 +492,7 @@ class VeronikaManager:
                 }
             }
         elif "Dreame" in manufacturer:
-             return {
+            return {
                 "service": "dreame_vacuum.vacuum_clean_segment",
                 "data": {
                     ATTR_ENTITY_ID: vacuum_entity,
@@ -492,6 +507,8 @@ class VeronikaManager:
 
     async def _send_vacuum_command(self, vacuum_entity: str, segments: List[int]) -> None:
         """Send cleaning command to vacuum with retry logic."""
+        if self._is_unloading:
+            return
         try:
             payload: Dict[str, Any] = await self._get_vacuum_command_payload(vacuum_entity, segments)
         except Exception as err:
@@ -563,7 +580,8 @@ class VeronikaManager:
         if failed_switches:
             await self._notify_error(
                 "Toggle Reset Failed",
-                f"Failed to reset {len(failed_switches)} toggle(s): {', '.join(failed_switches)}"
+                f"Failed to reset {len(failed_switches)} toggle(s): {', '.join(failed_switches)}",
+                error_type="toggle_reset"
             )
 
     async def stop_cleaning(self) -> None:
@@ -592,11 +610,34 @@ class VeronikaManager:
         if failed_vacuums:
             await self._notify_error(
                 "Stop Cleaning Failed",
-                f"Failed to stop {len(failed_vacuums)} vacuum(s): {', '.join(failed_vacuums)}"
+                f"Failed to stop {len(failed_vacuums)} vacuum(s): {', '.join(failed_vacuums)}",
+                error_type="stop_cleaning"
             )
+
+    def get_entity_watch_list(self) -> Set[str]:
+        """Return the set of entity IDs that should be watched for state changes."""
+        entities: Set[str] = set()
+        for cache_data in self._entity_cache.values():
+            for key in ('switch', 'disable', 'sensor'):
+                entity_id = cache_data.get(key)
+                if entity_id is not None:
+                    entities.add(entity_id)
+        return entities
+
+    @property
+    def last_error(self) -> Optional[str]:
+        """Return the last error message."""
+        return self._last_error
+
+    @property
+    def error_count(self) -> int:
+        """Return the total error count."""
+        return self._error_count
 
     async def async_unload(self) -> None:
         """Cleanup when unloading the integration."""
+        self._is_unloading = True
+
         # Cancel any pending completion tasks
         for monitor in self._vacuum_monitors.values():
             if monitor.get("completion_task") and not monitor["completion_task"].done():

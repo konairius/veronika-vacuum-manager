@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Set, Callable
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.core import HomeAssistant, callback, Event
 from homeassistant.helpers.event import async_track_state_change_event
-from homeassistant.helpers import area_registry as ar, entity_registry as er, device_registry as dr, template
+from homeassistant.helpers import area_registry as ar, entity_registry as er, device_registry as dr
 from homeassistant.util import slugify, dt as dt_util
 from homeassistant.const import STATE_ON, STATE_OFF, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.helpers.event import async_call_later
@@ -233,8 +233,8 @@ class VeronikaRoomSensor(BinarySensorEntity):
 
         # If we are here, occupancy is clear and cooldown is over
         if self._cooldown_timer:
-             self._cooldown_timer()
-             self._cooldown_timer = None
+            self._cooldown_timer()
+            self._cooldown_timer = None
 
         # Check Doors
         ent_reg = er.async_get(self.hass)
@@ -277,20 +277,20 @@ class VeronikaRoomSensor(BinarySensorEntity):
                     except Exception as err:
                         _LOGGER.warning(f"Error getting area for door {door}: {err}")
                         continue
-                
-                # 1. Target Room Door
-                if door_area == target_area and vacuum_area != target_area:
-                    self._status_reason = "Door Closed"
-                    self._is_on = False
-                    self.async_write_ha_state()
-                    return
-                
-                # 2. Current Room Door (Trapped)
-                if door_area == vacuum_area and vacuum_area != target_area:
-                    self._status_reason = "Trapped"
-                    self._is_on = False
-                    self.async_write_ha_state()
-                    return
+
+                    # 1. Target Room Door
+                    if door_area == target_area and vacuum_area != target_area:
+                        self._status_reason = "Door Closed"
+                        self._is_on = False
+                        self.async_write_ha_state()
+                        return
+
+                    # 2. Current Room Door (Trapped)
+                    if door_area == vacuum_area and vacuum_area != target_area:
+                        self._status_reason = "Trapped"
+                        self._is_on = False
+                        self.async_write_ha_state()
+                        return
             except Exception as err:
                 _LOGGER.warning(f"Error processing door sensor {door}: {err}")
                 continue
