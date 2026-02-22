@@ -1,0 +1,25 @@
+[project]
+name = "veronika-vacuum-manager"
+version = "1.1.0"
+description = "Home Assistant custom integration for intelligent vacuum cleaning management"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["custom_components/veronika"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 40
